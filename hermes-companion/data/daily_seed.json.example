@@ -1,0 +1,31 @@
+{
+  "enabled": true,
+  "anchors": [
+    {"start": "08:00", "end": "08:30", "title": "起床、给窗台的绿植浇水", "kind": "self"},
+    {"start": "09:00", "end": "10:00", "title": "晨间阅读一段最近在追的书", "kind": "self"},
+    {"start": "12:30", "end": "13:30", "title": "午餐与短暂休息", "kind": "self"},
+    {"start": "18:30", "end": "19:30", "title": "晚餐", "kind": "self"},
+    {"start": "22:30", "end": "23:00", "title": "睡前整理今日笔记", "kind": "self"}
+  ],
+  "llm": {
+    "enabled": true,
+    "task": "title_generation",
+    "provider": null,
+    "model": null,
+    "base_url": null,
+    "api_key": null,
+    "temperature": 0.7,
+    "max_tokens": 800,
+    "extra_count": 2
+  },
+  "soul_path": null,
+  "_doc": [
+    "把本文件部署到 ~/.hermes/companion/daily_seed.json 即可生效。",
+    "anchors: 每日固定锚点。kind 可选 self / interaction / ambient。",
+    "llm.enabled: 关掉则只写 anchors。HERMES_COMPANION_DAILY_SEED_LLM=0 也可临时关。",
+    "llm.task: hermes 辅助任务名（title_generation / compression / vision 等），决定走 ~/.hermes/config.yaml 里哪段配置。",
+    "llm.provider/model/base_url/api_key: 显式覆盖。base_url 非空时 provider 会被强制设为 'custom'（OpenAI 兼容 API 入口）。",
+    "soul_path: null 时读 ~/.hermes/SOUL.md。",
+    "全局开关: HERMES_COMPANION_DAILY_SEED=0 完全关闭本模块。"
+  ]
+}
