@@ -27,7 +27,7 @@ hermes plugins list      # 确认 enabled
 
 | 变量 | 默认 | 作用 |
 |---|---|---|
-| `HERMES_TIMEZONE` | 系统本地 | 时间标签时区 |
+| `HERMES_TIMEZONE` | 系统本地 | 时间标签时区。**优先级**：`hermes_time` 模块解析（与 Hermes 主程序一致）> `HERMES_TIMEZONE` > `~/.hermes/config.yaml: timezone` > 系统时区。Hermes 不可导入时走 env/config 兜底。参考 [hermes-time_perception-extension](https://github.com/gejifeng/hermes-time_perception-extension) |
 | `HERMES_COMPANION_INFERENCE` | `1` | `0` 关闭情感自动推断 |
 | `HERMES_COMPANION_INFERENCE_INTERVAL` | `60` | 两次推断最小间隔（秒） |
 | `HERMES_COMPANION_HEARTBEAT` | `1` | `0` 关闭插件内 heartbeat 线程 |

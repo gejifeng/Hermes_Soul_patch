@@ -48,8 +48,8 @@ def test_format_current_time_explicit_tz(monkeypatch):
     mod = _fresh_time_context(monkeypatch, tz="Asia/Shanghai")
     tag = mod.format_current_time()
     assert _TIME_TAG_RE.match(tag), f"tag 格式不符: {tag!r}"
-    # Asia/Shanghai 应当展示 CST 或 +0800
-    assert ("CST" in tag) or ("+0800" in tag) or ("+08" in tag), tag
+    # 新实现直接展示 IANA 名
+    assert "Asia/Shanghai" in tag, tag
 
 
 def test_format_current_time_invalid_tz_falls_back(monkeypatch):
@@ -65,7 +65,19 @@ def test_config_yaml_timezone_used_when_env_unset(monkeypatch, tmp_path):
     mod = _fresh_time_context(monkeypatch, tz=None, hermes_home=tmp_path)
     tag = mod.format_current_time()
     assert _TIME_TAG_RE.match(tag), tag
-    assert ("JST" in tag) or ("+0900" in tag) or ("+09" in tag), tag
+    assert "Asia/Tokyo" in tag, tag
+
+
+def test_hermes_time_module_takes_precedence(monkeypatch, tmp_path):
+    """伪造 hermes_time._resolve_timezone_name，验证它优先于本地 env/config。"""
+    import types
+    fake = types.ModuleType("hermes_time")
+    fake._resolve_timezone_name = lambda: "America/New_York"  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "hermes_time", fake)
+    # 即使 env 设了别的也应被 hermes_time 覆盖
+    mod = _fresh_time_context(monkeypatch, tz="Asia/Shanghai", hermes_home=tmp_path)
+    tag = mod.format_current_time()
+    assert "America/New_York" in tag, tag
 
 
 def test_pre_llm_call_hook_returns_time_context(monkeypatch, tmp_path):

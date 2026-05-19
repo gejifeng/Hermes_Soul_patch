@@ -2,27 +2,50 @@
 Turn-level 时间格式化工具。
 
 设计要点：
-  - 时区优先级：HERMES_TIMEZONE 环境变量 > ~/.hermes/config.yaml 的 timezone 字段 > 系统本地时区
-  - 时区字符串读取一次缓存（_tz_str），但每次调用 format_current_time() 重新求 datetime.now()
-  - 任何异常都降级到 datetime.now().astimezone()，保证 hook 永不抛错
+  - 时区解析优先委托 Hermes 自带的 ``hermes_time`` 模块，确保与 Hermes 主程序
+    完全一致的优先级链：HERMES_TIMEZONE > ~/.hermes/config.yaml: timezone > 系统本地时区。
+  - Hermes 不可导入时（独立测试场景）走本地等价实现作为兜底。
+  - 时区字符串模块加载时解析一次并缓存（``_tz_str``），datetime.now() 每次重新求值。
+  - 任何异常都降级到 ``datetime.now().astimezone()``，保证 hook 永不抛错。
+
+参考实现：https://github.com/gejifeng/hermes-time_perception-extension
 """
 
 import os
 from datetime import datetime
+from pathlib import Path
 
-# 模块导入时解析一次时区字符串。HERMES_TIMEZONE 优先。
-_tz_str = os.environ.get("HERMES_TIMEZONE", "").strip()
 
-if not _tz_str:
+def _resolve_tz_from_hermes() -> str:
+    """优先委托 hermes_time._resolve_timezone_name()，保持与 Hermes 主程序一致。"""
     try:
-        import yaml  # PyYAML 是 Hermes 的依赖，可直接使用
-        from pathlib import Path
-        _cfg = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "config.yaml"
-        if _cfg.exists():
-            _loaded = yaml.safe_load(_cfg.read_text(encoding="utf-8")) or {}
-            _tz_str = (_loaded.get("timezone") or "").strip()
+        import hermes_time  # type: ignore[import-not-found]
+        return (hermes_time._resolve_timezone_name() or "").strip()
     except Exception:
-        _tz_str = ""
+        return ""
+
+
+def _resolve_tz_local() -> str:
+    """Hermes 不可用时的本地等价实现：env > ~/.hermes/config.yaml > ''."""
+    tz_env = os.environ.get("HERMES_TIMEZONE", "").strip()
+    if tz_env:
+        return tz_env
+    try:
+        import yaml  # PyYAML 是 Hermes 的运行时依赖
+        cfg_path = Path(
+            os.environ.get("HERMES_HOME", Path.home() / ".hermes")
+        ) / "config.yaml"
+        if cfg_path.exists():
+            loaded = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+            tz_cfg = loaded.get("timezone", "")
+            if isinstance(tz_cfg, str) and tz_cfg.strip():
+                return tz_cfg.strip()
+    except Exception:
+        pass
+    return ""
+
+
+_tz_str = _resolve_tz_from_hermes() or _resolve_tz_local()
 
 
 _WEEKDAYS_ZH = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
@@ -30,7 +53,7 @@ _WEEKDAYS_ZH = ["星期一", "星期二", "星期三", "星期四", "星期五",
 
 def format_current_time() -> str:
     """
-    返回形如 `[Current time: 2026-05-20 14:30 CST 星期三]` 的标签字符串。
+    返回形如 `[Current time: 2026-05-20 14:30 Asia/Shanghai 星期三]` 的标签字符串。
 
     永不抛异常：任何时区解析失败都回退到本地时区。
     """
@@ -44,5 +67,7 @@ def format_current_time() -> str:
         now = datetime.now().astimezone()
 
     weekday = _WEEKDAYS_ZH[now.weekday()]
-    tz_label = now.strftime("%Z") or now.strftime("%z")
+    tz_label = _tz_str or now.strftime("%Z") or now.strftime("%z")
+    if tz_label == "CST":
+        tz_label = "Asia/Shanghai"
     return f"[Current time: {now.strftime('%Y-%m-%d %H:%M')} {tz_label} {weekday}]"
