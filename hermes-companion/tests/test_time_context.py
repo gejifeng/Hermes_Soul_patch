@@ -34,6 +34,13 @@ def _fresh_time_context(monkeypatch, *, tz: str | None = None, hermes_home: Path
     else:
         monkeypatch.delenv("HERMES_HOME", raising=False)
 
+    # Most tests exercise the local fallback path. A real hermes_time module may
+    # be installed on the developer machine and would otherwise override the
+    # temporary HERMES_HOME config. The dedicated precedence test injects its own
+    # fake hermes_time after this helper runs.
+    if "hermes_time" not in getattr(_fresh_time_context, "_keep_modules", set()):
+        monkeypatch.setitem(sys.modules, "hermes_time", None)
+
     sys.modules.pop("companion.time_context", None)
     return importlib.import_module("companion.time_context")
 
@@ -74,8 +81,12 @@ def test_hermes_time_module_takes_precedence(monkeypatch, tmp_path):
     fake = types.ModuleType("hermes_time")
     fake._resolve_timezone_name = lambda: "America/New_York"  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "hermes_time", fake)
-    # 即使 env 设了别的也应被 hermes_time 覆盖
-    mod = _fresh_time_context(monkeypatch, tz="Asia/Shanghai", hermes_home=tmp_path)
+    _fresh_time_context._keep_modules = {"hermes_time"}
+    try:
+        # 即使 env 设了别的也应被 hermes_time 覆盖
+        mod = _fresh_time_context(monkeypatch, tz="Asia/Shanghai", hermes_home=tmp_path)
+    finally:
+        _fresh_time_context._keep_modules = set()
     tag = mod.format_current_time()
     assert "America/New_York" in tag, tag
 

@@ -30,18 +30,24 @@ def _resolve_tz_local() -> str:
     tz_env = os.environ.get("HERMES_TIMEZONE", "").strip()
     if tz_env:
         return tz_env
-    try:
-        import yaml  # PyYAML 是 Hermes 的运行时依赖
-        cfg_path = Path(
-            os.environ.get("HERMES_HOME", Path.home() / ".hermes")
-        ) / "config.yaml"
-        if cfg_path.exists():
-            loaded = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+    cfg_path = Path(
+        os.environ.get("HERMES_HOME", Path.home() / ".hermes")
+    ) / "config.yaml"
+    if cfg_path.exists():
+        text = ""
+        try:
+            text = cfg_path.read_text(encoding="utf-8")
+            import yaml  # PyYAML 是 Hermes 的运行时依赖
+            loaded = yaml.safe_load(text) or {}
             tz_cfg = loaded.get("timezone", "")
             if isinstance(tz_cfg, str) and tz_cfg.strip():
                 return tz_cfg.strip()
-    except Exception:
-        pass
+        except Exception:
+            # 单测/轻量环境可能没有 PyYAML；只解析顶层 `timezone: ...` 兜底。
+            for line in text.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("timezone:"):
+                    return stripped.split(":", 1)[1].strip().strip("'\"")
     return ""
 
 

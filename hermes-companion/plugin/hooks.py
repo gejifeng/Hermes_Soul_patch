@@ -16,6 +16,7 @@ import logging
 from companion.emotion_inference import schedule_inference
 from companion.emotion_state import load_emotion_state, nudge_emotion
 from companion.heartbeat import drain_pending
+from companion.world_interaction import observe_interaction
 from companion.time_context import format_current_time
 from companion.world_state import format_today_brief, roll_over_if_new_day
 
@@ -72,6 +73,15 @@ def on_post_llm_call(*, session_id: str = "", user_message: str = "",
     except Exception as e:
         logger.warning("schedule_inference 失败: %s", e)
 
+    try:
+        observe_interaction(
+            user_message=user_message,
+            assistant_response=assistant_response,
+            conversation_history=conversation_history,
+        )
+    except Exception as e:
+        logger.warning("world_interaction 失败: %s", e)
+
 
 # --- post_tool_call ---------------------------------------------------------
 
@@ -102,8 +112,11 @@ def on_post_tool_call(*, tool_name: str = "", args=None, result=None,
     try:
         nudge_emotion(
             valence_delta=-0.1,
+            arousal_delta=0.05,
+            confidence_delta=-0.05,
             dominant="mildly_frustrated",
             note=f"工具 {tool_name} 执行失败。",
+            source="tool_failure",
         )
     except Exception as e:
         logger.warning("emotion nudge 失败: %s", e)

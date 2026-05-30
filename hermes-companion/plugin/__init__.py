@@ -21,6 +21,7 @@ Hermes 自动发现 ~/.hermes/plugins/hermes-companion/ 并调用 register(ctx)�
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
@@ -46,59 +47,68 @@ def _heartbeat_enabled() -> bool:
     )
 
 
+def _truthy_env(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _cron_delivery_enabled() -> bool:
+    """Return True when Hermes cron is already responsible for Telegram heartbeat."""
+    if _truthy_env("HERMES_COMPANION_HEARTBEAT_FORCE"):
+        return False
+
+    hermes_home = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
+    jobs_path = hermes_home / "cron" / "jobs.json"
+    try:
+        data = json.loads(jobs_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+
+    for job in data.get("jobs", []):
+        if not isinstance(job, dict) or not job.get("enabled", True):
+            continue
+        script = str(job.get("script") or "")
+        name = str(job.get("name") or "")
+        deliver = str(job.get("deliver") or "local").strip().lower()
+        if deliver and deliver != "local" and (
+            script.endswith("companion_heartbeat.py") or name == "companion-heartbeat"
+        ):
+            return True
+    return False
+
+
 def _start_heartbeat_thread(ctx) -> None:
     """策略 1：插件内后台线程，直接 ctx.inject_message()。
 
-    - CLI/TUI 模式下，arousal > 阈值时主动发起新 turn 或中断当前 turn 插入消息。
-    - Gateway 模式下 ctx.inject_message() 返回 False，本线程自动降级到队列文件
-      （走 pre_llm_call drain_pending 注入）。
-    - 进程退出时 daemon 线程自动收回。
+    CLI/TUI 模式下可真正主动插入消息；Gateway 模式下 Hermes 当前没有 CLI
+    引用，inject_message 会返回 False，本线程会退回 pending 队列。队列只会在
+    下一次用户输入时被 pre_llm_call drain，不等价于平台主动推送。
     """
-    from companion.emotion_state import _read_state
-    from companion.heartbeat import (
-        AROUSAL_THRESHOLD, CHECK_INTERVAL, enqueue, queue_path,
-    )
+    from companion.heartbeat import CHECK_INTERVAL, collect_heartbeat_messages, enqueue, queue_path
 
-    threshold = AROUSAL_THRESHOLD
     interval = CHECK_INTERVAL
-    greeted_date: dict[str, str] = {"day": ""}
+
+    def _emit(msg: str) -> None:
+        ok = False
+        try:
+            ok = bool(ctx.inject_message(msg, role="user"))
+        except Exception as e:
+            logger.warning("inject_message error: %s", e)
+        if ok:
+            logger.info("heartbeat injected message")
+            return
+        try:
+            enqueue(msg)
+            logger.info("heartbeat fallback to queue: %s", queue_path())
+        except Exception as e:
+            logger.warning("enqueue fallback failed: %s", e)
 
     def _loop():
         logger.info("companion heartbeat thread started (interval=%ds)", interval)
-        # 启动延后一下，避免插件刚加载就刷消息
         time.sleep(min(interval, 30))
         while True:
             try:
-                state = _read_state()
-                from datetime import datetime
-                now = datetime.now()
-                arousal = state.get("arousal", 0)
-
-                msg: str | None = None
-                if isinstance(arousal, (int, float)) and arousal > threshold:
-                    msg = (
-                        f"[心跳] 我现在处于 {state.get('dominant', 'unknown')} 状态。"
-                        f"{state.get('note', '')}"
-                    )
-                else:
-                    today = now.strftime("%Y-%m-%d")
-                    if now.hour == 9 and now.minute < 10 and greeted_date["day"] != today:
-                        msg = "[心跳] 早上好。今天有什么计划？"
-                        greeted_date["day"] = today
-
-                if msg:
-                    ok = False
-                    try:
-                        ok = bool(ctx.inject_message(msg, role="user"))
-                    except Exception as e:
-                        logger.warning("inject_message error: %s", e)
-                    if not ok:
-                        # Gateway 模式或 CLI 不可用 → 降级到队列
-                        try:
-                            enqueue(msg)
-                            logger.info("heartbeat fallback to queue: %s", queue_path())
-                        except Exception as e:
-                            logger.warning("enqueue fallback failed: %s", e)
+                for msg in collect_heartbeat_messages():
+                    _emit(msg)
             except Exception as e:
                 logger.warning("heartbeat tick error: %s", e)
             time.sleep(interval)
@@ -123,6 +133,9 @@ def register(ctx) -> None:
         logger.warning("daily archiver 启动失败: %s", e)
     if _heartbeat_enabled():
         try:
-            _start_heartbeat_thread(ctx)
+            if _cron_delivery_enabled():
+                logger.info("companion heartbeat thread skipped: cron delivery is configured")
+            else:
+                _start_heartbeat_thread(ctx)
         except Exception as e:
             logger.warning("heartbeat 线程启动失败: %s", e)

@@ -21,6 +21,7 @@ def fresh(monkeypatch, tmp_path):
     for m in (
         "companion.emotion_state", "companion.heartbeat",
         "companion.emotion_inference", "companion.time_context",
+        "companion.world_state", "companion.world_interaction",
         "plugin.hooks",
     ):
         sys.modules.pop(m, None)
@@ -117,6 +118,22 @@ def test_post_llm_call_schedules_inference(fresh, monkeypatch):
     assert state["valence"] == pytest.approx(0.55)
     assert "messages" in captured
     assert any("[本轮 用户]" in m.get("content", "") for m in captured["messages"])
+
+
+def test_post_llm_call_updates_world_state(fresh, monkeypatch):
+    hooks, _, inf = fresh
+    monkeypatch.setattr(inf, "_call_aux_llm", lambda messages: '{"valence":0.1,"arousal":0.1,"dominant":"calm","note":"ok"}')
+
+    hooks.on_post_llm_call(
+        user_message="明晚8点提醒我一起听后摇",
+        assistant_response="好，我记下。",
+    )
+
+    from companion.world_state import list_today
+    doc = list_today()
+    assert len(doc["schedule"]) == 1
+    assert doc["schedule"][0]["kind"] == "interaction"
+    assert "听后摇" in doc["schedule"][0]["title"]
 
 
 def test_post_llm_call_throttled(fresh, monkeypatch):

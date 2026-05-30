@@ -41,11 +41,15 @@ _MAX_HISTORY_CHARS = 1500
 _SYSTEM_PROMPT = """你是情感状态分析器。读取下面一段最近的用户↔助手对话，
 评估【助手】此刻应当保持的情感状态。严格输出一行 JSON，不要任何其它文字：
 
-{"valence": -1..1, "arousal": 0..1, "dominant": "<短英文标签>", "note": "<不超过30字的中文描述>"}
+{"valence": -1..1, "arousal": 0..1, "energy": 0..1, "social_need": 0..1, "confidence": 0..1, "momentum": -1..1, "dominant": "<短英文标签>", "note": "<不超过30字的中文描述>"}
 
 规则：
 - valence: -1 极度消极、0 中性、+1 极度积极
 - arousal: 0 平静、1 高度激活
+- energy: 当前精力/行动余量，0 倦怠，1 很有精力
+- social_need: 主动靠近/想联系用户的需求，0 不需要，1 很强
+- confidence: 你对本次情绪判断的置信度，信息不足时降低
+- momentum: 相比上次状态的情绪惯性/变化方向，负数回落，正数升温
 - dominant 用小写英文短词，如 calm / curious / content / frustrated / excited / tender / weary
 - 若对话很平淡，保持小幅度变化（不超过 ±0.15）
 - 只输出一行 JSON，不要前后缀
@@ -127,6 +131,10 @@ def _parse_inference(raw: str) -> dict | None:
             return {
                 "valence": float(obj.get("valence", 0.0)),
                 "arousal": float(obj.get("arousal", 0.0)),
+                "energy": float(obj.get("energy", obj.get("arousal", 0.0))),
+                "social_need": float(obj.get("social_need", 0.35)),
+                "confidence": float(obj.get("confidence", 0.55)),
+                "momentum": float(obj.get("momentum", 0.0)),
                 "dominant": str(obj.get("dominant", "")).strip(),
                 "note": str(obj.get("note", "")).strip(),
             }
@@ -171,7 +179,7 @@ def _infer_and_update(
         if parsed is None:
             logger.info("emotion_inference: 解析失败，原始输出=%r", raw[:200])
             return
-        update_emotion(**parsed)
+        update_emotion(**parsed, source="inference")
         logger.info(
             "emotion_inference: 更新 → valence=%+.2f arousal=%.2f dominant=%s",
             parsed["valence"], parsed["arousal"], parsed["dominant"],

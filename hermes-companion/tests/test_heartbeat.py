@@ -15,7 +15,12 @@ if str(_REPO_ROOT) not in sys.path:
 @pytest.fixture
 def hb(monkeypatch, tmp_path):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    for m in ("companion.heartbeat", "companion.emotion_state"):
+    for m in (
+        "companion.heartbeat",
+        "companion.emotion_state",
+        "companion.world_state",
+        "companion.world_interaction",
+    ):
         sys.modules.pop(m, None)
     import importlib
     return importlib.import_module("companion.heartbeat")
@@ -69,3 +74,30 @@ def test_tick_silent_when_low_arousal_and_off_hours(hb, monkeypatch):
     monkeypatch.setattr(hb, "datetime", _FakeDT)
     hb._tick()
     assert hb.drain_pending() == ""
+
+
+def test_collect_due_event_message(hb):
+    from datetime import datetime, timedelta
+    from companion.world_state import add_event
+
+    now = datetime.now().replace(hour=20, minute=0, second=0, microsecond=0)
+    add_event(
+        now.isoformat(timespec="minutes"),
+        (now + timedelta(minutes=30)).isoformat(timespec="minutes"),
+        "测试提醒",
+        kind="interaction",
+    )
+
+    msgs = hb.collect_heartbeat_messages(now)
+    assert msgs == ["[日程] 20:00 我们约好了「测试提醒」。"]
+
+
+def test_collect_arousal_respects_cooldown(hb):
+    from companion.emotion_state import update_emotion
+
+    update_emotion(0.8, 0.9, "eager", "想主动说一句", source="test")
+    first = hb.collect_heartbeat_messages()
+    second = hb.collect_heartbeat_messages()
+
+    assert any("eager" in msg for msg in first)
+    assert second == []

@@ -187,20 +187,23 @@ def format_today_brief(now: datetime | None = None) -> str:
         status = ev.get("status", _STATUS_PENDING)
         clock = _fmt_clock(ev.get("start", ""))
 
+        ev_id = ev.get("id", "")
+        id_hint = f" id={ev_id}" if ev_id else ""
+
         if status == _STATUS_DONE:
-            done.append(f"{clock} 完成了「{title}」")
+            done.append(f"{clock} 完成了「{title}」({status}{id_hint})")
             continue
         if status == _STATUS_MISSED:
-            done.append(f"{clock} 错过了「{title}」")
+            done.append(f"{clock} 错过了「{title}」({status}{id_hint})")
             continue
         # pending
         if start and end and start <= now < end:
-            current.append(f"现在（{clock} 起）正在「{title}」")
+            current.append(f"现在（{clock} 起）正在「{title}」(pending{id_hint})")
         elif start and start <= now:
             # 已开始但无 end 字段 → 视作进行中
-            current.append(f"{clock} 开始的「{title}」仍在进行")
+            current.append(f"{clock} 开始的「{title}」仍在进行(pending{id_hint})")
         else:
-            upcoming.append(f"{clock} 计划「{title}」")
+            upcoming.append(f"{clock} 计划「{title}」(pending{id_hint})")
 
     parts: list[str] = []
     weekday = _WEEKDAYS_ZH[now.weekday()]
@@ -397,11 +400,23 @@ def add_ambient(note: str, when: datetime | None = None) -> None:
 
 def mark_done(event_id: str) -> bool:
     """把指定事件状态置为 done。返回是否找到并修改。"""
+    return mark_status(event_id, _STATUS_DONE)
+
+
+def mark_missed(event_id: str) -> bool:
+    """把指定事件状态置为 missed。返回是否找到并修改。"""
+    return mark_status(event_id, _STATUS_MISSED)
+
+
+def mark_status(event_id: str, status: str) -> bool:
+    """把指定事件状态置为 status。返回是否找到并修改。"""
+    if status not in {_STATUS_PENDING, _STATUS_DONE, _STATUS_MISSED}:
+        raise ValueError(f"status 必须是 pending/done/missed 之一，得到 {status!r}")
     with _file_lock(_events_path()):
         doc = _read_events()
         for ev in doc.get("schedule", []):
             if ev.get("id") == event_id:
-                ev["status"] = _STATUS_DONE
+                ev["status"] = status
                 _write_events(doc)
                 return True
     return False
