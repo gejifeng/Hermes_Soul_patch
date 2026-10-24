@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.env
+deploy/data/
+deploy/images/
+deploy/private.env
+*.bak-*
+temp/
+*.sqlite
+*.sqlite-*
+*.token
+*.env
+cookies*.json

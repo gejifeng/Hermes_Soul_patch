@@ -1,0 +1,76 @@
+# 复制到 ~/.config/hermes-soul/config.yaml 后按自己的环境修改。路径支持 ~。
+home: ~/.local/share/hermes-soul
+hermes_root: ~/.hermes/hermes-agent
+hermes_home: ~/.hermes/profiles/hermes-soul   # 后台活动专用的 Hermes profile
+python: ~/.hermes/hermes-agent/venv/bin/python
+host: 127.0.0.1
+port: 9120
+access_token_file: ~/.config/hermes-soul/access.token
+mcp_url: http://127.0.0.1:18060/mcp
+mcp_token_file: ~/.config/hermes-soul/mcp.token
+interval_seconds: 720
+idle_max_seconds: 720
+max_calls_per_day: 500
+worker_timeout: 150
+max_browse_steps: 3
+max_output_tokens: 1800
+structured_json: true
+request_overrides:
+  extra_body:
+    chat_template_kwargs:
+      enable_thinking: false
+bridge_owner_ids: [] # 主人的 Telegram 数字 ID（字符串）
+
+# 角色设定。提示词中的名字、对主人的称呼和公开兴趣由这里填入；更完整的人物设定放在
+# <home>/identity/SOUL.md 与 USER.md。
+persona:
+  name: 小安
+  owner: TA            # 提示词里对主人的称呼，如「他」「她」或一个昵称
+  interests: 生活、植物、城市漫步、读书
+
+delivery:
+  mode: draft             # telegram 表示真实发送；draft 只留草稿
+  authorized: false       # 确认后改为 true 才会外发
+  chat_id: ""             # 必须属于 bridge_owner_ids
+  token_file: ~/.config/hermes-soul/telegram.token
+  quiet_start: 22
+  quiet_end: 8
+  # 按块发送：块与块之间至少 min_interval_seconds；块内（如「在吗？」后再追一句）
+  # 只需 block_gap_seconds，每块最多 max_per_block 条，全天最多 max_per_day 条。
+  min_interval_seconds: 3600
+  block_gap_seconds: 150
+  max_per_block: 4
+  max_per_day: 32
+
+# 主人多久（除去睡眠时段）没消息时，宿主记录一次联系间隔事实，可引发想念/情绪与主动联系。
+contact:
+  gap_hours: [3, 8, 24, 48, 72]
+
+sleep_schedule:
+  enabled: true
+  start: "00:00"
+  end: "08:00"
+  timezone: Asia/Shanghai
+
+# 轻量检查仍每12分钟；没有新信息时，模型重新考虑逐渐延后。
+decision_min_seconds: 1800
+decision_max_seconds: 7200
+expression_review_min_seconds: 21600
+
+# 小红书互动。评论与回复无论如何都需要主人在管理页批准；dry_run 只记录将执行的操作，不访问平台。
+# live 模式下评论/回复要求 private_terms 非空，否则自动降为演练。
+social:
+  enabled: false
+  private_terms: []        # 不能出现在公开评论里的词：你的名字、昵称、城市、小区、公司等
+  max_chars: 80
+  max_post_age_days: 7
+  approval_ttl_seconds: 43200
+  jitter_seconds: 600
+  notification_poll_seconds: 10800
+  max_turns_per_person: 2
+  suspend_seconds: 86400
+  kinds:
+    like:     {mode: dry_run, per_day: 10, min_interval_seconds: 1800}
+    favorite: {mode: dry_run, per_day: 3,  min_interval_seconds: 1800}
+    comment:  {mode: dry_run, per_day: 3,  min_interval_seconds: 7200}
+    reply:    {mode: dry_run, per_day: 5,  min_interval_seconds: 7200}

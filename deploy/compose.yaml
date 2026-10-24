@@ -1,0 +1,30 @@
+services:
+  xiaohongshu-mcp:
+    image: crpi-hocnvtkomt7w9v8t.cn-beijing.personal.cr.aliyuncs.com/xpzouying/xiaohongshu-mcp@sha256:88e2603f324f567e0a254ed7a1e24d632a16eccc30e84ef3fb887e34a03d0fe3
+    container_name: hermes-soul-xhs-mcp
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18060:18060"
+    env_file:
+      - ${SOUL_MCP_ENV:-${HOME}/.config/hermes-soul/mcp.env}
+    environment:
+      COOKIES_PATH: /app/data/cookies.json
+      HOME: /app/data/home
+      XDG_CONFIG_HOME: /app/data/config
+    volumes:
+      - ${SOUL_DATA:-${HOME}/.local/share/hermes-soul}/xhs/data:/app/data
+      - ${SOUL_DATA:-${HOME}/.local/share/hermes-soul}/xhs/images:/app/images
+    shm_size: 512mb
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+# Optional: pin the network if Docker's default address pool collides with a
+# local VPN/TUN interface (symptom: the container has no outbound network).
+# networks:
+#   default:
+#     ipam:
+#       config:
+#         - subnet: 172.28.0.0/16

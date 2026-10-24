@@ -1,0 +1,19 @@
+[project]
+name = "hermes-soul"
+version = "0.5.0"
+description = "Interest-led continuous life runtime on Hermes"
+requires-python = ">=3.12"
+dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.30,<1", "httpx>=0.28,<1", "PyYAML>=6,<7"]
+
+[project.scripts]
+hermes-soul = "hermes_soul.cli:main"
+
+[build-system]
+requires = ["setuptools>=75,<83"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["hermes_soul*"]
+
+[tool.setuptools.package-data]
+hermes_soul = ["web/*.html"]

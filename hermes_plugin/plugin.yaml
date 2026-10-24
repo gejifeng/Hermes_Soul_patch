@@ -1,0 +1,10 @@
+name: hermes-soul-bridge
+version: 0.1.0
+description: "Bring actual autonomous experiences into the owner's Hermes conversation."
+author: gejifeng
+kind: standalone
+pip_dependencies:
+  - PyYAML
+provides_hooks:
+  - pre_llm_call
+  - post_llm_call

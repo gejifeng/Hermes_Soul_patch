@@ -1,0 +1,20 @@
+[Unit]
+Description=Hermes Soul interest-led life runtime
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Adjust the checkout path and the Hermes venv Python to your installation.
+Type=simple
+WorkingDirectory=%h/Hermes_Soul_patch
+Environment=PYTHONPATH=%h/Hermes_Soul_patch
+ExecStart=%h/.hermes/hermes-agent/venv/bin/python -m hermes_soul.cli serve
+Restart=on-failure
+RestartSec=10
+KillMode=control-group
+TimeoutStopSec=15
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
