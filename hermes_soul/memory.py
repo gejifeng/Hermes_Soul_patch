@@ -35,8 +35,17 @@ def active(record, now=None):
         not p.get("expires_at") or p["expires_at"] > (now or time.time()))
 
 
-def recall(store, query="", limit=20):
+def recall(store, query="", limit=20, embeddings=None):
     selected = {}
+    sem_map = {}
+    if embeddings and embeddings.client.is_configured() and str(query or "").strip():
+        try:
+            for item in embeddings.search(query, limit=min(limit, 10), min_score=0.44):
+                sem_map[item["id"]] = item
+        except Exception:
+            sem_map = {}
+
+    lex_items = []
     q = terms(query)
     if q:
         marks = ','.join('?' for _ in q)
@@ -45,7 +54,24 @@ def recall(store, query="", limit=20):
         for r in rows:
             item = dict(r); item["payload"] = json.loads(item["payload"]); item["refs"] = json.loads(item["refs"])
             if active(item):
-                item["recalled_by"] = "topic"; selected[item["id"]] = item
+                if item["id"] in sem_map:
+                    item["recalled_by"] = "hybrid"
+                    item["semantic_score"] = sem_map[item["id"]]["semantic_score"]
+                else:
+                    item["recalled_by"] = "topic"
+                lex_items.append(item)
+
+    # Hybrid hits (both lexical + semantic) first, then top semantic hits, then lexical hits
+    for item in lex_items:
+        if item["recalled_by"] == "hybrid":
+            selected[item["id"]] = item
+    for rid, item in sem_map.items():
+        if len(selected) < limit:
+            selected.setdefault(rid, item)
+    for item in lex_items:
+        if len(selected) < limit:
+            selected.setdefault(item["id"], item)
+
     # Always expose unresolved commitments/boundaries, even when the topic is unrelated.
     important = store.db.execute("SELECT * FROM records WHERE kind IN ('situation','boundary','agreement','task') ORDER BY updated DESC LIMIT 80").fetchall()
     for r in important:

@@ -102,6 +102,18 @@ class Xiaohongshu:
         return {"logged_in": yes, "message": text}
 
 
+def _extract_cover_url(card):
+    if not isinstance(card, dict):
+        return ""
+    cov = card.get("cover") or {}
+    if isinstance(cov, dict):
+        for k in ("urlDefault", "urlPre", "url"):
+            val = str(cov.get(k) or "").strip()
+            if val.startswith(("https://", "http://")):
+                return val
+    return ""
+
+
 def feed_cards(value):
     """Normalize only actual feed objects; never invent a detail-read from a cover."""
     cards = []
@@ -112,10 +124,14 @@ def feed_cards(value):
         elif isinstance(obj, dict):
             card = obj.get("noteCard") or obj.get("note_card")
             if card and obj.get("id"):
-                cards.append({"id": obj["id"], "xsec_token": obj.get("xsecToken", obj.get("xsec_token", "")),
-                              "title": card.get("displayTitle", card.get("title", "")),
-                              "type": card.get("type", "unknown"), "user": card.get("user", {}),
-                              "media_understood": False})
+                entry = {"id": obj["id"], "xsec_token": obj.get("xsecToken", obj.get("xsec_token", "")),
+                         "title": card.get("displayTitle", card.get("title", "")),
+                         "type": card.get("type", "unknown"), "user": card.get("user", {}),
+                         "media_understood": False}
+                cover = _extract_cover_url(card)
+                if cover:
+                    entry["cover_url"] = cover
+                cards.append(entry)
             else:
                 for val in obj.values():
                     if isinstance(val, (list, dict)):

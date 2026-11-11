@@ -24,17 +24,31 @@ def compact_content(tool, data):
         body = str(note.get('desc', ''))
         comments = data.get('data', {}).get('comments', {})
         comments = comments.get('list', []) if isinstance(comments, dict) else comments
-        return {'post_id': note.get('noteId', data.get('feed_id')), 'type': note.get('type'),
-                'title': note.get('title', ''), 'body': body[:4500],
-                'author': note.get('user', {}).get('nickname', ''),
-                'published_at': date_text(note.get('time')),
-                'source_claim': '作者声称或转载，独立核实状态未知',
-                'reposted': any(w in body+str(note.get('title','')) for w in ('转载', '转自', '摘自')),
-                'applicable_dates': re.findall(r'\d{1,4}[年./月-]\d{1,2}(?:[月./-]\d{1,2}日?)?|本周末|下周末|双休日|明天|周[一二三四五六日天]', body)[:25],
-                'temporal_status': '适用日期需结合发布时间核对',
-                'comments': [{'text': str(x.get('content', ''))[:240], 'published_at': date_text(x.get('createTime'))}
-                             for x in (comments or [])[:4] if isinstance(x, dict)],
-                'media_understood': False}
+        images = note.get('imageList') or note.get('images') or []
+        first_img = ''
+        if isinstance(images, list) and images and isinstance(images[0], dict):
+            for k in ('urlDefault', 'urlPre', 'url', 'infoList'):
+                v = images[0].get(k)
+                if isinstance(v, str) and v.startswith(('https://', 'http://')):
+                    first_img = v
+                    break
+                if isinstance(v, list) and v and isinstance(v[0], dict) and str(v[0].get('url', '')).startswith(('https://', 'http://')):
+                    first_img = str(v[0]['url'])
+                    break
+        out = {'post_id': note.get('noteId', data.get('feed_id')), 'type': note.get('type'),
+               'title': note.get('title', ''), 'body': body[:4500],
+               'author': note.get('user', {}).get('nickname', ''),
+               'published_at': date_text(note.get('time')),
+               'source_claim': '作者声称或转载，独立核实状态未知',
+               'reposted': any(w in body+str(note.get('title','')) for w in ('转载', '转自', '摘自')),
+               'applicable_dates': re.findall(r'\d{1,4}[年./月-]\d{1,2}(?:[月./-]\d{1,2}日?)?|本周末|下周末|双休日|明天|周[一二三四五六日天]', body)[:25],
+               'temporal_status': '适用日期需结合发布时间核对',
+               'comments': [{'text': str(x.get('content', ''))[:240], 'published_at': date_text(x.get('createTime'))}
+                            for x in (comments or [])[:4] if isinstance(x, dict)],
+               'media_understood': False}
+        if first_img:
+            out['image_url'] = first_img
+        return out
     feeds = data.get('feeds', data.get('items', [])) or []
     return {'cards': [{'post_id': x.get('id'), 'title': x.get('noteCard', {}).get('displayTitle', ''),
                        'type': x.get('noteCard', {}).get('type'),
@@ -72,4 +86,6 @@ def semantic_fingerprint(source, external_id, payload):
     else:
         # URL credentials, counters and new image URLs do not constitute a new experience.
         clean = compact_content(payload.get('tool'), payload.get('content', {}))
+        if isinstance(clean, dict):
+            clean = {k: v for k, v in clean.items() if k != 'image_url'}
     return hashlib.sha256(json.dumps([source, external_id, clean], ensure_ascii=False, sort_keys=True).encode()).hexdigest()

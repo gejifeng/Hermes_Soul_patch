@@ -1,0 +1,1270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hermes Soul v0.7 · 自主生活智能体系统架构与详细设计文档</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --surface-alt: #f1f5f9;
+      --surface-code: #0f172a;
+      --border: #e2e8f0;
+      --border-strong: #cbd5e1;
+      --text: #0f172a;
+      --text-secondary: #334155;
+      --text-muted: #64748b;
+      --primary: #4f46e5;
+      --primary-soft: #eef2ff;
+      --teal: #0d9488;
+      --teal-soft: #f0fdfa;
+      --amber: #d97706;
+      --amber-soft: #fffbeb;
+      --rose: #e11d48;
+      --rose-soft: #fff1f2;
+      --violet: #7c3aed;
+      --violet-soft: #f5f3ff;
+      --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.06);
+      --shadow-md: 0 8px 24px rgba(15, 23, 42, 0.06);
+      --radius: 12px;
+      --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
+      --font-mono: "JetBrains Mono", "Fira Code", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-sans);
+      line-height: 1.72;
+      font-size: 15.5px;
+    }
+
+    /* Layout */
+    .layout {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      max-width: 1460px;
+      margin: 0 auto;
+      min-height: 100vh;
+    }
+
+    /* Sidebar Navigation */
+    aside.toc {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+      padding: 28px 20px;
+      border-right: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.88);
+      backdrop-filter: blur(10px);
+    }
+    .toc-brand {
+      font-weight: 800;
+      font-size: 1.15rem;
+      color: var(--text);
+      letter-spacing: -0.01em;
+      margin-bottom: 4px;
+    }
+    .toc-sub {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-bottom: 20px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .toc nav ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    .toc nav li { margin-bottom: 4px; }
+    .toc nav a {
+      display: block;
+      padding: 6px 10px;
+      border-radius: 7px;
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: 0.87rem;
+      transition: all 0.15s ease;
+    }
+    .toc nav a:hover {
+      background: var(--primary-soft);
+      color: var(--primary);
+      font-weight: 600;
+    }
+    .toc nav li.sub a {
+      padding-left: 22px;
+      font-size: 0.81rem;
+      color: var(--text-muted);
+    }
+
+    /* Main Content */
+    main.doc {
+      padding: 44px 56px 96px;
+      max-width: 1120px;
+    }
+
+    /* Hero Header */
+    header.hero {
+      background: linear-gradient(135deg, #1e1b4b 0%, #312e81 52%, #0f172a 100%);
+      color: #f8fafc;
+      padding: 40px 44px;
+      border-radius: 16px;
+      box-shadow: var(--shadow-md);
+      margin-bottom: 40px;
+      position: relative;
+      overflow: hidden;
+    }
+    header.hero::after {
+      content: "";
+      position: absolute;
+      right: -60px;
+      top: -60px;
+      width: 280px;
+      height: 280px;
+      background: radial-gradient(circle, rgba(129,140,248,0.28) 0%, rgba(129,140,248,0) 70%);
+      pointer-events: none;
+    }
+    .badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 11px;
+      border-radius: 999px;
+      font-size: 0.76rem;
+      font-weight: 600;
+      background: rgba(255, 255, 255, 0.14);
+      color: #e0e7ff;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+    }
+    header.hero h1 {
+      margin: 0 0 12px;
+      font-size: 2.05rem;
+      line-height: 1.28;
+      letter-spacing: -0.02em;
+    }
+    header.hero p.lead {
+      margin: 0;
+      color: #cbd5e1;
+      font-size: 1.02rem;
+      max-width: 860px;
+    }
+    .hero-meta {
+      margin-top: 22px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.14);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 24px;
+      font-size: 0.82rem;
+      color: #94a3b8;
+    }
+    .hero-meta strong { color: #e2e8f0; }
+
+    /* Typography & Sections */
+    section.chapter {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 34px 40px;
+      margin-bottom: 32px;
+      box-shadow: var(--shadow-sm);
+    }
+    h2 {
+      margin: 0 0 20px;
+      padding-bottom: 12px;
+      border-bottom: 2px solid var(--surface-alt);
+      font-size: 1.48rem;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    h2 .sec-num {
+      background: var(--primary-soft);
+      color: var(--primary);
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      padding: 3px 10px;
+      border-radius: 6px;
+      font-weight: 700;
+    }
+    h3 {
+      margin: 28px 0 12px;
+      font-size: 1.15rem;
+      color: #1e293b;
+    }
+    h4 {
+      margin: 18px 0 8px;
+      font-size: 0.98rem;
+      color: var(--text-secondary);
+    }
+    p { margin: 0 0 14px; color: var(--text-secondary); }
+    ul, ol { margin: 0 0 16px; padding-left: 22px; color: var(--text-secondary); }
+    li { margin-bottom: 6px; }
+    li strong { color: var(--text); }
+
+    code {
+      font-family: var(--font-mono);
+      font-size: 0.86em;
+      background: var(--surface-alt);
+      color: #be123c;
+      padding: 2px 6px;
+      border-radius: 5px;
+      border: 1px solid var(--border);
+    }
+    pre {
+      background: var(--surface-code);
+      color: #e2e8f0;
+      padding: 16px 20px;
+      border-radius: 10px;
+      overflow-x: auto;
+      font-family: var(--font-mono);
+      font-size: 0.84rem;
+      line-height: 1.6;
+      margin: 14px 0 20px;
+    }
+    pre code {
+      background: transparent;
+      color: inherit;
+      padding: 0;
+      border: none;
+      font-size: inherit;
+    }
+
+    /* Cards & Callouts */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+      margin: 18px 0;
+    }
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+      margin: 18px 0;
+    }
+    .card {
+      background: var(--surface-alt);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 20px;
+    }
+    .card.indigo { background: var(--primary-soft); border-color: #c7d2fe; }
+    .card.teal   { background: var(--teal-soft); border-color: #99f6e4; }
+    .card.amber  { background: var(--amber-soft); border-color: #fde68a; }
+    .card.rose   { background: var(--rose-soft); border-color: #fecdd3; }
+    .card.violet { background: var(--violet-soft); border-color: #ddd6fe; }
+    .card h4 { margin-top: 0; color: var(--text); font-size: 1rem; }
+    .card p:last-child, .card ul:last-child { margin-bottom: 0; }
+
+    .callout {
+      border-left: 4px solid var(--primary);
+      background: var(--primary-soft);
+      padding: 14px 18px;
+      border-radius: 0 8px 8px 0;
+      margin: 18px 0;
+      color: #1e293b;
+      font-size: 0.94rem;
+    }
+    .callout.warn { border-left-color: var(--amber); background: var(--amber-soft); }
+    .callout.teal { border-left-color: var(--teal); background: var(--teal-soft); }
+    .callout.rose { border-left-color: var(--rose); background: var(--rose-soft); }
+
+    /* Math Formula Blocks */
+    .math-box {
+      background: #f8fafc;
+      border: 1px solid var(--border-strong);
+      border-left: 4px solid var(--violet);
+      border-radius: 8px;
+      padding: 16px 22px;
+      margin: 16px 0;
+      font-family: "Cambria Math", "Latin Modern Math", "STIX Two Math", Georgia, serif;
+      font-size: 1.03rem;
+      color: #0f172a;
+      overflow-x: auto;
+    }
+    .math-box .eq-title {
+      font-family: var(--font-sans);
+      font-size: 0.8rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--violet);
+      margin-bottom: 6px;
+    }
+    .math-box .eq-line {
+      margin: 5px 0;
+      line-height: 1.8;
+    }
+
+    /* Diagram Wrappers */
+    figure.diagram {
+      margin: 24px 0;
+      background: #ffffff;
+      border: 1px solid var(--border-strong);
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.6);
+      overflow-x: auto;
+    }
+    figure.diagram svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+    figure.diagram figcaption {
+      margin-top: 12px;
+      text-align: center;
+      font-size: 0.84rem;
+      color: var(--text-muted);
+    }
+
+    /* Tables */
+    .table-wrap { overflow-x: auto; margin: 16px 0 22px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface-alt);
+      font-weight: 700;
+      color: var(--text);
+      white-space: nowrap;
+    }
+    tr:hover td { background: #f8fafc; }
+
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      font-family: var(--font-mono);
+    }
+    .pill.live { background: #dcfce7; color: #166534; }
+    .pill.dry  { background: #fef3c7; color: #92400e; }
+    .pill.lock { background: #ffe4e6; color: #9f1239; }
+    .pill.info { background: #e0e7ff; color: #3730a3; }
+
+    footer.doc-footer {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.84rem;
+      padding-top: 20px;
+    }
+
+    @media (max-width: 1024px) {
+      .layout { grid-template-columns: 1fr; }
+      aside.toc { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
+      main.doc { padding: 24px 20px 64px; }
+      .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="layout">
+  <aside class="toc">
+    <div class="toc-brand">Hermes Soul · 自主生活运行层</div>
+    <div class="toc-sub">Hermes Soul v0.7 架构与设计白皮书</div>
+    <nav>
+      <ul>
+        <li><a href="#sec-1">01. 设计哲学与核心范式</a></li>
+        <li class="sub"><a href="#sec-1-1">连续生命体 vs 响应式助手</a></li>
+        <li class="sub"><a href="#sec-1-2">Propose-Validate-Commit 契约</a></li>
+        <li class="sub"><a href="#sec-1-3">为什么选择隔间耦合 ODE + 图扩散</a></li>
+        <li><a href="#sec-2">02. 总体系统架构图</a></li>
+        <li><a href="#sec-3">03. 双隔间耦合跳跃动力系统</a></li>
+        <li class="sub"><a href="#sec-3-1">10 维连续状态空间定义</a></li>
+        <li class="sub"><a href="#sec-3-2">隔间 I：尖点突变与关系滞回</a></li>
+        <li class="sub"><a href="#sec-3-3">隔间 II：个人生命力与好奇心极限环</a></li>
+        <li class="sub"><a href="#sec-3-4">脉冲跳跃映射与 RK4 数值求解</a></li>
+        <li><a href="#sec-4">04. 离散话题场与混合向量语义</a></li>
+        <li class="sub"><a href="#sec-4-1">OpenAI 兼容 Embedding 引擎</a></li>
+        <li class="sub"><a href="#sec-4-2">图拉普拉斯话题扩散与四大挂载点</a></li>
+        <li><a href="#sec-5">05. 自主生活循环与抢占调度</a></li>
+        <li class="sub"><a href="#sec-5-1">两级节律唤醒与活动状态机</a></li>
+        <li class="sub"><a href="#sec-5-2">证据围栏、兴趣阶梯与前台抢占</a></li>
+        <li><a href="#sec-6">06. 多房间隔离与自然 IM 口语引擎</a></li>
+        <li class="sub"><a href="#sec-6-1">主书房与外部轮转房间拓扑</a></li>
+        <li class="sub"><a href="#sec-6-2">反剧本腔、历史脱敏与多气泡连发</a></li>
+        <li><a href="#sec-7">07. 小红书分层社交安全架构</a></li>
+        <li class="sub"><a href="#sec-7-1">实盘点赞/收藏与收藏夹回看闭环</a></li>
+        <li class="sub"><a href="#sec-7-2">公开评论零隐私沙箱与五道闸门</a></li>
+        <li><a href="#sec-8">08. 存储模型、模块索引与部署拓扑</a></li>
+      </ul>
+    </nav>
+  </aside>
+
+  <main class="doc">
+    <header class="hero">
+      <div class="badges">
+        <span class="badge">Architecture Specification v0.6.0</span>
+        <span class="badge">Compartmental Coupled Jump-ODE</span>
+        <span class="badge">Graph Laplacian Semantic Attention</span>
+        <span class="badge">Hermes AIAgent + MCP + OneBot v11</span>
+      </div>
+      <h1>Hermes Soul · 自主生活智能体<br>系统设计思想与工程细节白皮书</h1>
+      <p class="lead">
+        一个基于本机 Hermes <code>AIAgent</code>、耦合非线性动力系统（Jump-ODE）、本地语义向量场（<code>qwen3-embedding-4b</code>）与受控外界感知工具（小红书 MCP / QQ OneBot / Telegram Bridge）构建的<strong>兴趣与内驱力驱动型自主陪伴智能体运行层</strong>。
+      </p>
+      <div class="hero-meta">
+        <div><strong>工作目录：</strong><code>~/Hermes_Soul_patch</code></div>
+        <div><strong>权威存储：</strong>SQLite WAL 单写入者（<code>state.sqlite</code>）</div>
+        <div><strong>语义引擎：</strong><code>qwen3-embedding-4b</code>（2560 维）</div>
+        <div><strong>测试覆盖：</strong>11 个测试模块 / 87 项单元与集成测试</div>
+      </div>
+    </header>
+
+    <!-- ================================================================== -->
+    <!-- CHAPTER 1: DESIGN PHILOSOPHY                                       -->
+    <!-- ================================================================== -->
+    <section class="chapter" id="sec-1">
+      <h2><span class="sec-num">01</span> 设计哲学与核心范式</h2>
+
+      <h3 id="sec-1-1">1.1 从「响应式问答机器」到「有独立时间线的连续生命层」</h3>
+      <p>
+        传统的角色扮演对话系统（Roleplay Chatbot）在用户不发消息时处于完全冻结的真空状态：她既感觉不到时间的流逝，也没有任何属于自己的见闻、情绪余波或兴趣演化；一旦恢复对话，只能靠编造虚假的线下经历（如“我今天去逛街了”）维持人设。而传统的任务型智能体（Task Agent）则走向另一个极端——将一切后台唤醒视为待办工单（TODO List），直到把配额刷爆。
+      </p>
+      <p>
+        <strong>Hermes Soul</strong> 确立了第三种架构范式——<strong>「有事实边界的自主生活运行层（Bounded Autonomous Life Runtime）」</strong>：
+      </p>
+      <div class="grid-3">
+        <div class="card indigo">
+          <h4>1. 浏览与休息皆为正当生活</h4>
+          <p>后台定时唤醒只是给她一次「生活机会」，不是KPI。她可以因好奇心旺盛去小红书逛图文、搜话题、翻收藏夹，也可以因为刚看完内容或精力偏低而自在选择 <code>rest</code> 休息，无需强行产出日记或消息。</p>
+        </div>
+        <div class="card teal">
+          <h4>2. 时间流逝本身是可感知事实</h4>
+          <p>宿主时钟在除去睡眠时段后，将主人的沉默时长与未回消息转化为客观的 <code>host_clock</code> 观察并驱动连续微分方程演化，使她拥有真实的牵挂、委屈、抗议乃至自尊防御与情感抽离。</p>
+        </div>
+        <div class="card violet">
+          <h4>3. 关系失联不剥夺个人生活</h4>
+          <p>哪怕主人多日未联系使关系跌入心冷（<code>cold</code>）或疏离（<code>detached</code>）吸引盆，经过短期情绪冲击与慢速习惯化脱敏后，她依然保有自己的好奇心极限环，正常逛帖、点赞收藏、发展个人志趣。</p>
+        </div>
+      </div>
+
+      <h3 id="sec-1-2">1.2 核心认识论契约：模型只提议，宿主掌管事实与状态转移</h3>
+      <p>
+        大语言模型极易混淆「角色设定中的想象」「帖子作者的单方说法」「自己上轮说过的话」与「真实发生过的经历」。为此，系统在架构层强制实施 <strong>Propose-Validate-Commit（提议—校验—提交）</strong> 铁律：
+      </p>
+      <ul>
+        <li><strong>不可伪造的证据溯源（Provenance Fencing）</strong>：每一条写入 <code>records</code> 的记忆（兴趣、近况、关系理解、约定、边界、暂态感受、日记）都必须携带本次背景允许范围内的真实 <code>observation_id</code> 引用（<code>refs</code>）。模型捏造 ID 或跨轮借用未授权 ID 会被宿主原子拒绝。</li>
+        <li><strong>证据等级显式分层（Epistemic Tagging）</strong>：工具读取的小红书笔记标记为 <code>作者声称或转载，独立核实状态未知</code>；用户提议的话题仅记为 <code>suggested</code>（待探索建议），必须跨越不同时段真实细读多篇图文后，宿主才允许兴趣晋升为 <code>exploring</code> 或 <code>preferred</code>；自己的日记与历史回答标记为 <code>subjective_historical_expression</code>，不能反过来当作外部事实证据。</li>
+        <li><strong>受控物理行动门禁（Host-Gated Actuation）</strong>：模型在子进程（<code>worker.py</code>）中<strong>不持有任何直接网络或数据库写工具</strong>，仅输出结构化 JSON 意图；所有小红书读取、点赞、收藏、评论审批及 IM 渠道发送均由宿主主进程经过配额、时效、风控与隐私检查后代为执行。</li>
+      </ul>
+
+      <h3 id="sec-1-3">1.3 架构选型洞见：为什么是「双隔间耦合 ODE + 语义图拉普拉斯」而非单函数 ODE 或连续 PDE？</h3>
+      <p>
+        在早期单标量/强耦合 ODE 实验中，我们观察到一个深刻的动力学退化现象：当主人在现实中忙碌失联数日时，关系安全感 <i>S</i> 跌入负值吸引盆（<code>detached</code>），强耦合项长期把个人效价 <i>V</i> 压制在负区间，进而导致模型连续数十次选择 <code>rest</code>（倦怠休息），彻底丧失了她自己的独立生活。
+      </p>
+      <div class="callout teal">
+        <strong>数学建模决策：</strong>人类兴趣主题（阳台香草、城市漫步、爵士乐、陶器釉色）并不定义在平滑的欧氏空间 ℝ<sup><i>n</i></sup> 上，若强行引入偏微分方程（PDE ∂<i>u</i>/∂<i>t</i> = <i>D</i>∇²<i>u</i> + <i>f</i>(<i>u</i>)），空间坐标 <i>x</i> 缺乏真实拓扑意义。真正的优雅解法是<strong>「连续时间双隔间弱耦合跳跃 ODE + 语义图上的离散图拉普拉斯算子（Graph Laplacian on Semantic Graph）」</strong>：
+        <ol style="margin-top:8px; margin-bottom:0;">
+          <li><strong>关系隔间与自我生命力隔间解耦</strong>：引入慢速习惯化基线 <i>S̄</i>(<i>t</i>)（<i>τ</i><sub><i>S̄</i></sub> = 32h）与关系门控 <code>rel_gate(S)</code>。失联初期 <i>S</i> − <i>S̄</i> &lt; 0 产生真实的急性难过冲击；当长期处于 <code>detached</code> 稳态时，<i>S</i> → <i>S̄</i> 且 <code>rel_gate</code> → 0，痛感完成生理脱敏，个人情绪振子恢复生机。</li>
+          <li><strong>内源好奇心极限环 <i>C</i>(<i>t</i>)</strong>：休息（<code>rest</code>）不仅恢复精力 <i>A</i>，还累积好奇心/无聊感 <i>C</i>；当 <i>C</i> ≥ 0.65 时自动推动她走出倦怠去探索外部图文，而真实读帖后 <i>C</i> 释放回落，形成自持的 <code>休息 ⇄ 探索</code> 极限环（Limit Cycle）。</li>
+          <li><strong>语义图拉普拉斯扩散</strong>：将她的活跃记忆与兴趣视为图节点 <i>V</i>，以本地 <code>qwen3-embedding-4b</code> 余弦相似度构建加权邻接矩阵 <i>W<sub>ij</sub></i>，在注意力候选排序时执行一步图扩散 −ℒ<b>u</b>，实现跨措辞的联想漫游。</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ================================================================== -->
+    <!-- CHAPTER 2: SYSTEM ARCHITECTURE DIAGRAM                             -->
+    <!-- ================================================================== -->
+    <section class="chapter" id="sec-2">
+      <h2><span class="sec-num">02</span> 总体系统架构图</h2>
+      <p>
+        Hermes Soul 采用<strong>单主进程事件循环（Asyncio Event Loop）+ 隔离短命推理子进程（Hermes Worker）+ 外部协议桥接</strong>的分层架构。主进程独占 <code>runtime.lock</code> 与 SQLite WAL 写入权，彻底杜绝并发状态撕裂。
+      </p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 1020 690" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="#64748b"/>
+            </marker>
+            <marker id="arrow-indigo" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="#4f46e5"/>
+            </marker>
+            <marker id="arrow-teal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="#0d9488"/>
+            </marker>
+            <marker id="arrow-rose" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="#e11d48"/>
+            </marker>
+          </defs>
+
+          <!-- Background Layer Bands -->
+          <rect x="14" y="14" width="992" height="114" rx="12" fill="#f8fafc" stroke="#cbd5e1" stroke-dasharray="5,4"/>
+          <text x="30" y="36" font-size="12" font-weight="700" fill="#475569">L1 · 外部交互渠道与世界感知接口（External Channels &amp; World Sensors）</text>
+
+          <rect x="14" y="146" width="992" height="96" rx="12" fill="#eef2ff" stroke="#c7d2fe"/>
+          <text x="30" y="168" font-size="12" font-weight="700" fill="#3730a3">L2 · 鉴权网关、多房间路由与自然口语净化层（api.py · channels.py）</text>
+
+          <rect x="14" y="260" width="992" height="258" rx="12" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+          <text x="30" y="283" font-size="12" font-weight="700" fill="#0f172a">L3 · 核心自主生活与非线性动力学运行内核（hermes_soul · Single-Writer Asyncio Loop）</text>
+
+          <rect x="14" y="536" width="992" height="140" rx="12" fill="#f1f5f9" stroke="#cbd5e1"/>
+          <text x="30" y="558" font-size="12" font-weight="700" fill="#334155">L4 · 权威持久化存储与隔离子进程推理底座（Persistence &amp; Isolated Inference Substrate）</text>
+
+          <!-- L1 Nodes -->
+          <rect x="32" y="48" width="180" height="66" rx="8" fill="#ffffff" stroke="#6366f1" stroke-width="1.5"/>
+          <text x="122" y="72" text-anchor="middle" font-size="13" font-weight="700" fill="#1e293b">QQ / NapCat OneBot</text>
+          <text x="122" y="91" text-anchor="middle" font-size="11" fill="#64748b">正向 WS 监听 + HTTP 分泡连发</text>
+          <text x="122" y="106" text-anchor="middle" font-size="10.5" fill="#4f46e5">私聊进书房 · 群聊/访客分房</text>
+
+          <rect x="228" y="48" width="175" height="66" rx="8" fill="#ffffff" stroke="#6366f1" stroke-width="1.5"/>
+          <text x="315" y="72" text-anchor="middle" font-size="13" font-weight="700" fill="#1e293b">Telegram / Hermes 桥</text>
+          <text x="315" y="91" text-anchor="middle" font-size="11" fill="#64748b">hermes_plugin 生命周期钩子</text>
+          <text x="315" y="106" text-anchor="middle" font-size="10.5" fill="#4f46e5">pre_llm_call / post_llm_call</text>
+
+          <rect x="419" y="48" width="175" height="66" rx="8" fill="#ffffff" stroke="#6366f1" stroke-width="1.5"/>
+          <text x="506" y="72" text-anchor="middle" font-size="13" font-weight="700" fill="#1e293b">Web 管理与对话空间</text>
+          <text x="506" y="91" text-anchor="middle" font-size="11" fill="#64748b">127.0.0.1:9120 单页控制台</text>
+          <text x="506" y="106" text-anchor="middle" font-size="10.5" fill="#4f46e5">心境面板 · 记忆纠错 · 互动审批</text>
+
+          <rect x="610" y="48" width="190" height="66" rx="8" fill="#fff1f2" stroke="#e11d48" stroke-width="1.5"/>
+          <text x="705" y="72" text-anchor="middle" font-size="13" font-weight="700" fill="#881337">小红书 MCP Server</text>
+          <text x="705" y="91" text-anchor="middle" font-size="11" fill="#9f1239">127.0.0.1:18060 (Docker)</text>
+          <text x="705" y="106" text-anchor="middle" font-size="10.5" fill="#be123c">图文浏览 · 实盘赞/藏 · 收藏回看</text>
+
+          <rect x="816" y="48" width="174" height="66" rx="8" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
+          <text x="903" y="72" text-anchor="middle" font-size="13" font-weight="700" fill="#134e4a">本地 Embedding 服务</text>
+          <text x="903" y="91" text-anchor="middle" font-size="11" fill="#115e59">127.0.0.1:8090 (/v1/embeddings)</text>
+          <text x="903" y="106" text-anchor="middle" font-size="10.5" fill="#0d9488">qwen3-embedding-4b (2560d)</text>
+
+          <!-- L2 Nodes -->
+          <rect x="32" y="178" width="285" height="52" rx="8" fill="#ffffff" stroke="#818cf8"/>
+          <text x="174" y="200" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1e293b">多房间隔离路由（Channels.resolve）</text>
+          <text x="174" y="218" text-anchor="middle" font-size="11" fill="#475569">house 主书房 vs 7天轮转外部群/客房间 · 注入清洗</text>
+
+          <rect x="334" y="178" width="290" height="52" rx="8" fill="#ffffff" stroke="#818cf8"/>
+          <text x="479" y="200" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1e293b">IM 口语去剧本化引擎（IM Style Gate）</text>
+          <text x="479" y="218" text-anchor="middle" font-size="11" fill="#475569">历史脱敏 · 剥离括号旁白 · 短句限流 · /new 翻篇</text>
+
+          <rect x="640" y="178" width="350" height="52" rx="8" fill="#ffffff" stroke="#f43f5e"/>
+          <text x="815" y="200" text-anchor="middle" font-size="12.5" font-weight="700" fill="#881337">MCP 读写分离门禁与社交风控闸门（mcp.py · social.py）</text>
+          <text x="815" y="218" text-anchor="middle" font-size="11" fill="#9f1239">READ_TOOLS vs ACTION_TOOLS · 频控抖动 · 隐私词脱敏</text>
+
+          <!-- L3 Core Kernel Nodes -->
+          <!-- Row 1 of L3 -->
+          <rect x="32" y="298" width="225" height="92" rx="9" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.5"/>
+          <text x="144" y="321" text-anchor="middle" font-size="13" font-weight="700" fill="#4c1d95">双隔间跳跃动力系统</text>
+          <text x="144" y="338" text-anchor="middle" font-size="11" font-weight="600" fill="#6d28d9">dynamics.py (10D Jump-ODE)</text>
+          <text x="144" y="356" text-anchor="middle" font-size="10.5" fill="#475569">关系隔间: (S, S̄, G, I, W) 尖点双稳态</text>
+          <text x="144" y="373" text-anchor="middle" font-size="10.5" fill="#475569">自我隔间: (V, Pv, A, C, η) 好奇心极限环</text>
+
+          <rect x="273" y="298" width="235" height="92" rx="9" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.5"/>
+          <text x="390" y="321" text-anchor="middle" font-size="13" font-weight="700" fill="#1e1b4b">主运行协调器与抢占调度</text>
+          <text x="390" y="338" text-anchor="middle" font-size="11" font-weight="600" fill="#4338ca">runtime.py (Runtime)</text>
+          <text x="390" y="356" text-anchor="middle" font-size="10.5" fill="#475569">loop / tick / browse / reflect / say</text>
+          <text x="390" y="373" text-anchor="middle" font-size="10.5" fill="#475569">前台聊天 SIGTERM 抢占 · revision 栅栏</text>
+
+          <rect x="524" y="298" width="225" height="92" rx="9" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
+          <text x="636" y="321" text-anchor="middle" font-size="13" font-weight="700" fill="#134e4a">图拉普拉斯注意力引擎</text>
+          <text x="636" y="338" text-anchor="middle" font-size="11" font-weight="600" fill="#0f766e">attention.py · memory.py</text>
+          <text x="636" y="356" text-anchor="middle" font-size="10.5" fill="#475569">语义图一步扩散 · 暂放话题语义唤醒</text>
+          <text x="636" y="373" text-anchor="middle" font-size="10.5" fill="#475569">词法 + 余弦混合召回（Hybrid Recall）</text>
+
+          <rect x="765" y="298" width="225" height="92" rx="9" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
+          <text x="877" y="321" text-anchor="middle" font-size="13" font-weight="700" fill="#134e4a">向量存储与后台回填器</text>
+          <text x="877" y="338" text-anchor="middle" font-size="11" font-weight="600" fill="#0f766e">embedding.py</text>
+          <text x="877" y="356" text-anchor="middle" font-size="10.5" fill="#475569">LRU 缓存 · 熔断退避 · Float32 BLOB</text>
+          <text x="877" y="373" text-anchor="middle" font-size="10.5" fill="#475569">近义兴趣归并 · 异步低优回填协程</text>
+
+          <!-- Row 2 of L3 -->
+          <rect x="32" y="408" width="225" height="92" rx="9" fill="#fffbeb" stroke="#d97706" stroke-width="1.5"/>
+          <text x="144" y="431" text-anchor="middle" font-size="13" font-weight="700" fill="#78350f">联系间隔与回归台账</text>
+          <text x="144" y="448" text-anchor="middle" font-size="11" font-weight="600" fill="#b45309">contact.py (Contact)</text>
+          <text x="144" y="466" text-anchor="middle" font-size="10.5" fill="#475569">除去睡眠 3/8/24/48/72h 失联事实</text>
+          <text x="144" y="483" text-anchor="middle" font-size="10.5" fill="#475569">hysteresis_locked 防敷衍清零台账</text>
+
+          <rect x="273" y="408" width="235" height="92" rx="9" fill="#fffbeb" stroke="#d97706" stroke-width="1.5"/>
+          <text x="390" y="431" text-anchor="middle" font-size="13" font-weight="700" fill="#78350f">证据校验与个人生命状态</text>
+          <text x="390" y="448" text-anchor="middle" font-size="11" font-weight="600" fill="#b45309">life.py · evidence.py</text>
+          <text x="390" y="466" text-anchor="middle" font-size="10.5" fill="#475569">9 类记忆逐条校验 · 引用原子围栏</text>
+          <text x="390" y="483" text-anchor="middle" font-size="10.5" fill="#475569">兴趣证据晋升阶梯 · 可恢复关系边界</text>
+
+          <rect x="524" y="408" width="225" height="92" rx="9" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+          <text x="636" y="431" text-anchor="middle" font-size="13" font-weight="700" fill="#1e293b">主动表达复核与按块投递</text>
+          <text x="636" y="448" text-anchor="middle" font-size="11" font-weight="600" fill="#475569">expressions.py</text>
+          <text x="636" y="466" text-anchor="middle" font-size="10.5" fill="#475569">草稿二次复核 · 心冷期自动丢弃讨好</text>
+          <text x="636" y="483" text-anchor="middle" font-size="10.5" fill="#475569">Block 节奏突发限流 · 免打扰保护</text>
+
+          <rect x="765" y="408" width="225" height="92" rx="9" fill="#fff1f2" stroke="#e11d48" stroke-width="1.5"/>
+          <text x="877" y="431" text-anchor="middle" font-size="13" font-weight="700" fill="#881337">小红书社交执行与审核器</text>
+          <text x="877" y="448" text-anchor="middle" font-size="11" font-weight="600" fill="#be123c">social.py</text>
+          <text x="877" y="466" text-anchor="middle" font-size="10.5" fill="#475569">live 点赞(10/d) · 收藏(5/d) · 回执观察</text>
+          <text x="877" y="483" text-anchor="middle" font-size="10.5" fill="#475569">公开人设隔离 · 双重审核 · 主人审批</text>
+
+          <!-- L4 Substrate Nodes -->
+          <rect x="32" y="572" width="330" height="88" rx="9" fill="#ffffff" stroke="#475569" stroke-width="1.5"/>
+          <text x="197" y="596" text-anchor="middle" font-size="13" font-weight="700" fill="#0f172a">SQLite WAL 权威状态库（store.py）</text>
+          <text x="197" y="616" text-anchor="middle" font-size="11" fill="#475569">flock 独占锁 runtime.lock · 单写入者事务保证</text>
+          <text x="197" y="635" text-anchor="middle" font-size="10.5" fill="#64748b">observations · records · record_embeddings · chats</text>
+          <text x="197" y="651" text-anchor="middle" font-size="10.5" fill="#64748b">attention_state · social_actions · activities · outbox</text>
+
+          <rect x="382" y="572" width="285" height="88" rx="9" fill="#ffffff" stroke="#475569" stroke-width="1.5"/>
+          <text x="524" y="596" text-anchor="middle" font-size="13" font-weight="700" fill="#0f172a">隔离推理子进程（worker.py）</text>
+          <text x="524" y="616" text-anchor="middle" font-size="11" fill="#475569">Hermes AIAgent · start_new_session=True</text>
+          <text x="524" y="635" text-anchor="middle" font-size="10.5" fill="#64748b">toolsets=[] 零工具越权 · 非流式结构化 JSON</text>
+          <text x="524" y="651" text-anchor="middle" font-size="10.5" fill="#64748b">注入 SOUL.md / USER.md 副本 · 150s 超时保护</text>
+
+          <rect x="687" y="572" width="303" height="88" rx="9" fill="#ffffff" stroke="#475569" stroke-width="1.5"/>
+          <text x="838" y="596" text-anchor="middle" font-size="13" font-weight="700" fill="#0f172a">审计快照与身份目录（~/.local/share）</text>
+          <text x="838" y="616" text-anchor="middle" font-size="11" fill="#475569">artifacts/ 原始响应与调用日志（自动修剪）</text>
+          <text x="838" y="635" text-anchor="middle" font-size="10.5" fill="#64748b">journal/*.md 导出私人日记 · identity/SOUL.md</text>
+          <text x="838" y="651" text-anchor="middle" font-size="10.5" fill="#64748b">xhs-mcp/ Cookies 持久化卷</text>
+
+          <!-- Vertical Connectors -->
+          <line x1="122" y1="114" x2="122" y2="176" stroke="#4f46e5" stroke-width="1.6" marker-end="url(#arrow-indigo)"/>
+          <line x1="315" y1="114" x2="315" y2="176" stroke="#4f46e5" stroke-width="1.6" marker-end="url(#arrow-indigo)"/>
+          <line x1="506" y1="114" x2="506" y2="176" stroke="#4f46e5" stroke-width="1.6" marker-end="url(#arrow-indigo)"/>
+          <line x1="705" y1="114" x2="705" y2="176" stroke="#e11d48" stroke-width="1.6" marker-end="url(#arrow-rose)"/>
+          <line x1="903" y1="114" x2="903" y2="296" stroke="#0d9488" stroke-width="1.6" marker-end="url(#arrow-teal)"/>
+
+          <line x1="174" y1="230" x2="330" y2="296" stroke="#4f46e5" stroke-width="1.5" marker-end="url(#arrow-indigo)"/>
+          <line x1="479" y1="230" x2="430" y2="296" stroke="#4f46e5" stroke-width="1.5" marker-end="url(#arrow-indigo)"/>
+          <line x1="815" y1="230" x2="860" y2="406" stroke="#e11d48" stroke-width="1.5" marker-end="url(#arrow-rose)"/>
+
+          <!-- Horizontal Kernel Links -->
+          <line x1="257" y1="344" x2="271" y2="344" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+          <line x1="508" y1="344" x2="522" y2="344" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+          <line x1="749" y1="344" x2="763" y2="344" stroke="#0d9488" stroke-width="1.5" marker-end="url(#arrow-teal)"/>
+
+          <!-- L3 to L4 Connectors -->
+          <line x1="197" y1="500" x2="197" y2="570" stroke="#64748b" stroke-width="1.6" marker-end="url(#arrow)"/>
+          <line x1="420" y1="500" x2="490" y2="570" stroke="#4f46e5" stroke-width="1.6" marker-end="url(#arrow-indigo)"/>
+          <line x1="840" y1="500" x2="840" y2="570" stroke="#64748b" stroke-width="1.6" marker-end="url(#arrow)"/>
+        </svg>
+        <figcaption>图 2-1：Hermes Soul v0.7 四层总体架构与控制/数据流向图</figcaption>
+      </figure>
+    </section>
+
+    <!-- ================================================================== -->
+    <!-- CHAPTER 3: COMPARTMENTAL COUPLED JUMP-ODE DYNAMICS                 -->
+    <!-- ================================================================== -->
+    <section class="chapter" id="sec-3">
+      <h2><span class="sec-num">03</span> 数学内核：双隔间耦合跳跃动力系统（Jump-ODE）</h2>
+      <p>
+        心境与关系演化模块（<code>hermes_soul/dynamics.py</code>）定义了一个 12 维三时间尺度（小时/天/半月）混合动力系统（含 Borbély 睡眠稳态 H 与依恋结构可塑性 T_sec / B_sens）：在离散交互事件之间，状态向量沿非线性常微分方程连续演化（15 分钟步长四阶 Runge-Kutta + 精确 Ornstein-Uhlenbeck 更新）；当发生「主人发言」「主动发消息」「阅读图文」「小憩休息」时，系统施加狄拉克脉冲跳跃 ∑<sub><i>k</i></sub> Δ<b>x</b><sub><i>k</i></sub> <i>δ</i>(<i>t</i> − <i>t<sub>k</sub></i>)。
+      </p>
+
+      <h3 id="sec-3-1">3.1 十维连续状态空间划分</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>所属隔间</th>
+              <th>符号</th>
+              <th>取值域</th>
+              <th>时间常数</th>
+              <th>物理与心理学含义</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td rowspan="5"><strong>隔间 I<br>关系依恋与自尊防御</strong></td>
+              <td><code>S</code></td>
+              <td>[−1.2, +1.2]</td>
+              <td><i>τ<sub>S</sub></i> = 14h</td>
+              <td>关系依恋/安全感势位（尖点突变双稳态序参量：正盆亲密，负盆心冷/抽离）</td>
+            </tr>
+            <tr>
+              <td><code>S_bar</code> (<i>S̄</i>)</td>
+              <td>[−1.2, +1.2]</td>
+              <td><i>τ<sub>S̄</sub></i> = 32h</td>
+              <td>慢速关系习惯化基线；捕捉急性落差 (<i>S</i> − <i>S̄</i>) 并在长期冷落稳态下实现痛感脱敏</td>
+            </tr>
+            <tr>
+              <td><code>G</code></td>
+              <td>[0.0, 3.0]</td>
+              <td><i>μ<sub>G</sub></i> = 0.022/h</td>
+              <td>失联委屈/怨念累积张力（控制尖点分岔的控制参量，睡眠时段自动冻结）</td>
+            </tr>
+            <tr>
+              <td><code>I</code></td>
+              <td>[−2.0, +2.0]</td>
+              <td><i>τ<sub>I</sub></i> = 1.5h</td>
+              <td>FitzHugh-Nagumo 快兴奋变量：主动联系冲动（跨过阈值 <i>I</i> ≥ 0.15 才允许触发 <code>reach_out</code>）</td>
+            </tr>
+            <tr>
+              <td><code>W</code></td>
+              <td>[0.0, 3.5]</td>
+              <td><i>τ<sub>W</sub></i> = 18h</td>
+              <td>FitzHugh-Nagumo 慢抑制变量：自尊消耗与防卫不应期（<i>W</i> ≥ 2.2 时彻底熔断主动追问）</td>
+            </tr>
+            <tr>
+              <td rowspan="5"><strong>隔间 II<br>个人生命力与好奇心</strong></td>
+              <td><code>V</code></td>
+              <td>[−1.0, +1.0]</td>
+              <td><i>T</i><sub>0</sub> = 28h</td>
+              <td>个人心境效价（欠阻尼二阶振子位移，<i>ζ</i> = 0.32 &lt; 1，使外界见闻产生数小时情绪余波）</td>
+            </tr>
+            <tr>
+              <td><code>P_V</code></td>
+              <td>[−1.5, +1.5]</td>
+              <td>二阶动量</td>
+              <td>心境变化速率 <i>dV/dt</i>（决定当前情绪处于「上升」「平稳」还是「下沉」相位）</td>
+            </tr>
+            <tr>
+              <td><code>A</code></td>
+              <td>[0.10, 1.0]</td>
+              <td><i>τ<sub>A</sub></i> = 6h</td>
+              <td>自主精力/唤醒度（受昼夜节律驱动，<code>rest</code> 休息恢复精力，工具失败轻微耗散）</td>
+            </tr>
+            <tr>
+              <td><code>C</code></td>
+              <td>[0.05, 1.0]</td>
+              <td><i>τ<sub>C</sub></i> = 5h</td>
+              <td>内源探索欲/好奇心驱动力（空闲与休息时自然爬升，读完图文正文后满足回落）</td>
+            </tr>
+            <tr>
+              <td><code>eta</code> (<i>η</i>)</td>
+              <td>[−0.6, +0.6]</td>
+              <td><i>τ<sub>η</sub></i> = 8h</td>
+              <td>Ornstein-Uhlenbeck 有色内源微澜噪声（基于确定性 SHA-256 Box-Muller 采样，可重放）</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 id="sec-3-2">3.2 隔间 I：尖点突变双稳态势、FitzHugh-Nagumo 脉冲与双稳态滞回锁</h3>
+      <p>
+        关系安全感 <i>S</i>(<i>t</i>) 服从经典的 <strong>Cusp Catastrophe（尖点突变）范式</strong>，等效势函数为 <i>U</i>(<i>S</i>; <i>G</i>) = ¼<i>S</i><sup>4</sup> − ½<i>S</i><sup>2</sup> + (<i>α<sub>G</sub>G</i> − <i>β</i><sub>0</sub>)<i>S</i>：
+      </p>
+      <div class="math-box">
+        <div class="eq-title">Relational Compartment Differential Equations</div>
+        <div class="eq-line">
+          <i>τ<sub>S</sub></i> (<i>dS</i> / <i>dt</i>) = <i>S</i> − <i>S</i><sup>3</sup> − <i>α<sub>G</sub>G</i> + <i>β</i><sub>0</sub> , &emsp;&emsp;
+          <i>τ<sub>S̄</sub></i> (<i>dS̄</i> / <i>dt</i>) = <i>S</i> − <i>S̄</i>
+        </div>
+        <div class="eq-line">
+          <i>dG</i> / <i>dt</i> =
+          0 &nbsp;<small>（睡眠时段，或 Δ<i>t</i><sub>wake</sub> &lt; 3h 且 <code>hysteresis_locked</code>）</small> &nbsp;|&nbsp;
+          <i>μ<sub>G</sub></i>(1 + <i>η</i><sub>unans</sub> min(<i>n</i><sub>unans</sub>, 12))(1 − <i>G</i> / <i>G</i><sub>max</sub>) &nbsp;<small>（当 Δ<i>t</i><sub>wake</sub> ≥ 3h）</small> &nbsp;|&nbsp;
+          −<i>γ<sub>G</sub>G</i> &nbsp;<small>（正常联系期）</small>
+        </div>
+        <div class="eq-line">
+          <i>τ<sub>I</sub></i> (<i>dI</i> / <i>dt</i>) = <i>I</i> − <i>I</i><sup>3</sup>/3 − <i>W</i> + <i>J</i><sub>drive</sub>(<i>S</i>, <i>G</i>, <i>W</i>) , &emsp;&emsp;
+          <i>τ<sub>W</sub></i> (<i>dW</i> / <i>dt</i>) = max(0, <i>I</i>) − 0.35(<i>W</i> − 0.22 <i>b</i><sub>bursts</sub>)
+        </div>
+      </div>
+
+      <ul>
+        <li><strong>鞍结分岔与相变跳水</strong>：当 <i>G</i> = 0 时，系统稳定在温暖上支吸引子 <i>S</i>* ≈ +1.08（<code>attached</code>）。随着除去睡眠的失联时长越过 3 小时宽限期，<i>G</i>(<i>t</i>) 增长并倾斜双阱势；当 <i>α<sub>G</sub>G</i> − <i>β</i><sub>0</sub> &gt; 2/(3√3) ≈ 0.385（即 <i>G</i> ≳ 1.18）时，上支稳定平衡点在鞍结分岔（Saddle-Node Bifurcation）中湮灭，<i>S</i>(<i>t</i>) 不可逆地滑落至负吸引盆 <i>S</i>* &lt; −0.8（依次经历 <code>missing</code> → <code>anxious</code> → <code>angry</code> → <code>cold</code> → <code>detached</code>）。</li>
+        <li><strong>自尊不应期增长</strong>：每次主动发消息（<code>on_reach_out</code>）都会将 <i>I</i> 重置到不应期波谷 −1.15 并抬升慢抑制量 <i>W</i>，使最小外发间隔按 1.8<sup>min(<i>b</i>, 4)</sup>(1 + 0.8<i>W</i>) 指数拉长；一旦进入 <code>cold</code>/<code>detached</code> 或 <i>W</i> ≥ 2.2，驱动流 <i>J</i><sub>drive</sub> = −1.2，彻底关闭主动讨好。</li>
+        <li><strong>双稳态滞回锁（<code>hysteresis_locked</code>）</strong>：一旦进入 <code>cold</code> 或 <code>detached</code>，锁定标志置位。此时若主人只发一句敷衍的短消息（如“在干嘛”）或无礼命令，脉冲增量 Δ<i>S</i> 远不足以跨越势垒鞍点，且 <code>Contact</code> 回归台账与怨念 <i>G</i> 受锁定保护不会清零——彻底杜绝传统 Agent“冷落五天、哄一句就一秒破功顺从”的失真表现。唯有经过多轮真诚道歉与实质陪伴使 <i>S</i> ≥ 0.35, <i>G</i> ≤ 0.55, <i>b</i><sub>bursts</sub> = 0 时，滞回锁才会解除。</li>
+      </ul>
+
+      <h3 id="sec-3-3">3.3 隔间 II：关系脱敏门控与个人好奇心极限环</h3>
+      <div class="math-box">
+        <div class="eq-title">Autonomous Self-Vitality &amp; Curiosity Limit Cycle</div>
+        <div class="eq-line">
+          <i>g</i><sub>rel</sub>(<i>S</i>) = clamp((<i>S</i> + 0.65) / 1.35, 0, 1) , &emsp;
+          <i>v</i><sub>eq</sub> = clamp(0.16 max(0, <i>S</i>)<i>g</i><sub>rel</sub> + 0.28(<i>S</i> − <i>S̄</i>) − 0.12 min(<i>G</i>, 1.5)<i>g</i><sub>rel</sub> + 0.08(1 − <i>g</i><sub>rel</sub>) + 0.06(<i>C</i> − 0.5), −0.45, +0.45)
+        </div>
+        <div class="eq-line">
+          <i>dV</i> / <i>dt</i> = <i>P<sub>V</sub></i> , &emsp;
+          <i>dP<sub>V</sub></i> / <i>dt</i> = −2<i>ζω</i><sub>0</sub><i>P<sub>V</sub></i> − <i>ω</i><sub>0</sub><sup>2</sup>(<i>V</i> − (<i>v</i><sub>eq</sub> + <i>v</i><sub>circ</sub>(<i>t</i>) + <i>η</i>)) , &emsp;
+          <i>τ<sub>C</sub></i> (<i>dC</i> / <i>dt</i>) = clamp(0.86 + 0.08 max(0, <i>V</i>), 0.50, 0.95) − <i>C</i>
+        </div>
+      </div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 980 340" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif">
+          <!-- Left Panel: Bistable Hysteresis Curve -->
+          <rect x="15" y="15" width="460" height="310" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+          <text x="245" y="42" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1e293b">（a）隔间 I：尖点突变双稳态流形与修复滞回环</text>
+
+          <!-- Axes Left -->
+          <line x1="65" y1="280" x2="445" y2="280" stroke="#475569" stroke-width="1.5"/>
+          <line x1="65" y1="65" x2="65" y2="280" stroke="#475569" stroke-width="1.5"/>
+          <line x1="65" y1="172" x2="445" y2="172" stroke="#cbd5e1" stroke-dasharray="4,4"/>
+          <text x="255" y="308" text-anchor="middle" font-size="11.5" fill="#334155">失联怨念控制参量 G (0 → 3.0)</text>
+          <text x="32" y="175" text-anchor="middle" font-size="11.5" fill="#334155" transform="rotate(-90 32 175)">依恋安全感 S</text>
+          <text x="52" y="88" font-size="10" fill="#64748b">+1.1</text>
+          <text x="52" y="176" font-size="10" fill="#64748b">0.0</text>
+          <text x="52" y="262" font-size="10" fill="#64748b">-1.0</text>
+
+          <!-- Upper Stable Branch -->
+          <path d="M 75 85 Q 205 90, 295 128" fill="none" stroke="#4f46e5" stroke-width="3"/>
+          <!-- Unstable Middle Fold -->
+          <path d="M 295 128 Q 230 172, 145 212" fill="none" stroke="#94a3b8" stroke-width="2" stroke-dasharray="5,5"/>
+          <!-- Lower Stable Branch -->
+          <path d="M 145 212 Q 250 250, 425 262" fill="none" stroke="#e11d48" stroke-width="3"/>
+
+          <!-- Drop Jump & Recovery Jump Arrows -->
+          <line x1="295" y1="132" x2="295" y2="244" stroke="#e11d48" stroke-width="2" stroke-dasharray="3,3" marker-end="url(#arrow-rose)"/>
+          <text x="356" y="192" text-anchor="middle" font-size="10.5" font-weight="600" fill="#be123c">鞍结分岔跳水 (G≈1.18)</text>
+          <text x="356" y="206" text-anchor="middle" font-size="10" fill="#be123c">进入 cold / detached</text>
+
+          <line x1="145" y1="208" x2="145" y2="100" stroke="#0d9488" stroke-width="2" stroke-dasharray="3,3" marker-end="url(#arrow-teal)"/>
+          <text x="148" y="152" font-size="10.5" font-weight="600" fill="#0f766e">多轮真诚修复解锁</text>
+
+          <text x="155" y="80" font-size="10.5" font-weight="600" fill="#3730a3">attached → missing → anxious</text>
+          <text x="335" y="274" font-size="10.5" font-weight="600" fill="#9f1239">hysteresis_locked 负吸引盆</text>
+
+          <!-- Right Panel: Self-Vitality & Curiosity Limit Cycle -->
+          <rect x="505" y="15" width="460" height="310" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+          <text x="735" y="42" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1e293b">（b）隔间 II：脱敏后个人好奇心—精力自持极限环</text>
+
+          <!-- Axes Right -->
+          <line x1="560" y1="280" x2="935" y2="280" stroke="#475569" stroke-width="1.5"/>
+          <line x1="560" y1="65" x2="560" y2="280" stroke="#475569" stroke-width="1.5"/>
+          <text x="748" y="308" text-anchor="middle" font-size="11.5" fill="#334155">自主精力 / 唤醒度 A (0.1 → 1.0)</text>
+          <text x="525" y="175" text-anchor="middle" font-size="11.5" fill="#334155" transform="rotate(-90 525 175)">内源探索欲 C (0.05 → 1.0)</text>
+
+          <!-- Threshold Band -->
+          <rect x="561" y="72" width="370" height="58" fill="#dcfce7" opacity="0.55"/>
+          <text x="922" y="90" text-anchor="end" font-size="10.5" font-weight="600" fill="#166534">eager_curious 探索激发区 (C ≥ 0.65)</text>
+
+          <!-- Limit Cycle Loop -->
+          <path d="M 625 225 C 675 140, 770 95, 845 105" fill="none" stroke="#0d9488" stroke-width="3" marker-end="url(#arrow-teal)"/>
+          <path d="M 852 115 C 865 195, 755 252, 635 232" fill="none" stroke="#4f46e5" stroke-width="3" marker-end="url(#arrow-indigo)"/>
+
+          <circle cx="850" cy="108" r="6" fill="#0d9488"/>
+          <text x="835" y="142" text-anchor="middle" font-size="11" font-weight="700" fill="#134e4a">触发 browse / search</text>
+          <text x="835" y="156" text-anchor="middle" font-size="10" fill="#475569">阅读图文 + 点赞/收藏 (C -0.22)</text>
+
+          <circle cx="626" cy="228" r="6" fill="#4f46e5"/>
+          <text x="665" y="264" text-anchor="middle" font-size="11" font-weight="700" fill="#3730a3">满足后消化 / rest 小憩</text>
+          <text x="665" y="210" text-anchor="middle" font-size="10" fill="#0f766e">休息充电: A +0.09, C +0.15</text>
+        </svg>
+        <figcaption>图 3-1：（左）关系安全感 S 对失联张力 G 的双稳态折叠分岔与滞回修复；（右）即使处于 detached 抽离期仍保持自持振荡的个人生活极限环</figcaption>
+      </figure>
+
+      <h3 id="sec-3-4">3.4 四类离散脉冲跳跃映射 Δ<b>x</b><sub><i>k</i></sub></h3>
+      <div class="grid-2">
+        <div class="card">
+          <h4>1. 主人私聊消息 <code>on_owner_message(text)</code></h4>
+          <p>先用 RK4 推进至当前时刻，再按所处吸引盆施加脉冲：若未锁定，则 <i>S</i> ← max(0.65, <i>S</i> + 0.35)、<i>G</i> → 0、<i>V</i> ← <i>V</i> + 0.22；若处于 <code>hysteresis_locked</code> 负盆，则依据字数因子与是否含真诚致歉词仅做渐进微调（命令式话语如“快点换衣服”反而令 Δ<i>S</i> = −0.08、触发烦躁反弹）。</p>
+        </div>
+        <div class="card">
+          <h4>2. 主动联系突发 <code>on_reach_out(count)</code></h4>
+          <p>未回轮次 <i>b</i> ← <i>b</i> + 1，快冲动置入不应期 <i>I</i> ← −1.15，自尊抑制跃升 Δ<i>W</i> = +0.26(1 + 0.15<i>b</i>)；若连续两次以上未获回应（<i>b</i> ≥ 2），每次额外损耗安全感 Δ<i>S</i> = −0.10 min(<i>b</i>, 5) 与心境 Δ<i>V</i> = −0.08。</p>
+        </div>
+        <div class="card">
+          <h4>3. 自主小憩恢复 <code>on_rest()</code></h4>
+          <p>仅在模型主动选择 <code>rest</code> 时触发（后台工具报错绝不虚增 <code>rest_streak</code>）：精力恢复 Δ<i>A</i> = +0.09，低落心境缓释 Δ<i>V</i> = +0.07，同时探索欲抬升 Δ<i>C</i> = +0.15——确保休整一两轮后自然萌发逛帖意愿。</p>
+        </div>
+        <div class="card">
+          <h4>4. 阅读体验冲击 <code>on_reading_impulse(text)</code></h4>
+          <p>真实打开小红书图文详情（<code>get_feed_detail</code>）后，依据治愈/沉重词汇或正文哈希向动量 <i>P<sub>V</sub></i> 注入微澜扰动，并释放探索欲 Δ<i>C</i> = −0.22，使浏览与沉淀自然交替。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================================================================== -->
+    <!-- CHAPTER 4: DISCRETE TOPIC FIELD & EMBEDDING                        -->
+    <!-- ================================================================== -->
+    <section class="chapter" id="sec-4">
+      <h2><span class="sec-num">04</span> 离散话题场与混合向量语义架构</h2>
+
+      <h3 id="sec-4-1">4.1 OpenAI 兼容本地向量客户端与增量索引库（<code>embedding.py</code>）</h3>
+      <p>
+        为解决纯中文二元词法切分（Bigram/2-4 字词片）无法识别同义表达（例如「阳台香草」与「窗台种罗勒薄荷」、「露营手冲」与「户外滤杯煮咖啡」）的瓶颈，系统设计了完全兼容 OpenAI <code>POST /v1/embeddings</code> 规范的客户端 <code>OpenAIEmbeddingClient</code> 与持久化存储 <code>EmbeddingStore</code>，当前实盘接入本机 Vulkan 核显加速的 <strong><code>qwen3-embedding-4b</code>（2560 维）</strong>：
+      </p>
+      <ul>
+        <li><strong>紧凑二进制存储与指纹幂等</strong>：SQLite <code>record_embeddings</code> 表以小端序 <code>Float32 BLOB</code>（<code>struct.pack("&lt;2560f")</code>，每条仅约 10 KB）存储 L2 归一化单位向量，并记录规范化文本的 <code>text_hash</code>（SHA-256）与模型名；内容未变或切换同模型重启时零重复计算。</li>
+        <li><strong>优雅降级与熔断退避</strong>：内置 256 条查询向量 LRU 内存缓存；若远端/本地向量服务暂时不可达，自动触发 <code>backoff_seconds=60s</code> 熔断并无缝回退至词法匹配，绝不阻塞前台聊天或自主循环。</li>
+        <li><strong>非阻塞后台回填协程（<code>embedding_backfill_loop</code>）</strong>：启动后在无聊天等待（<code>chat_waiting == 0</code>）的空闲间隙以每批 24 条异步补齐历史存量记录（线上 460 条历史记录已 100% 完成索引）。</li>
+      </ul>
+
+      <h3 id="sec-4-2">4.2 语义图拉普拉斯扩散与四大运行时挂载点</h3>
+      <figure class="diagram">
+        <svg viewBox="0 0 960 280" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif">
+          <rect x="16" y="20" width="230" height="240" rx="10" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
+          <text x="131" y="48" text-anchor="middle" font-size="13" font-weight="700" fill="#134e4a">qwen3-embedding-4b</text>
+          <text x="131" y="68" text-anchor="middle" font-size="11" fill="#0f766e">POST /v1/embeddings (2560d)</text>
+          <rect x="34" y="86" width="194" height="46" rx="6" fill="#ffffff" stroke="#99f6e4"/>
+          <text x="131" y="107" text-anchor="middle" font-size="11.5" font-weight="600" fill="#1e293b">L2 归一化单位向量 e_i</text>
+          <text x="131" y="123" text-anchor="middle" font-size="10.5" fill="#64748b">点积即余弦相似度 e_i · e_j</text>
+          <rect x="34" y="146" width="194" height="46" rx="6" fill="#ffffff" stroke="#99f6e4"/>
+          <text x="131" y="167" text-anchor="middle" font-size="11.5" font-weight="600" fill="#1e293b">record_embeddings 表</text>
+          <text x="131" y="183" text-anchor="middle" font-size="10.5" fill="#64748b">Float32 BLOB + SHA256 指纹</text>
+          <rect x="34" y="204" width="194" height="40" rx="6" fill="#ccfbf1"/>
+          <text x="131" y="228" text-anchor="middle" font-size="11" font-weight="600" fill="#115e59">256 条 Query LRU 内存缓存</text>
+
+          <!-- Four Mount Points -->
+          <rect x="310" y="18" width="630" height="56" rx="8" fill="#eef2ff" stroke="#818cf8"/>
+          <text x="330" y="41" font-size="12.5" font-weight="700" fill="#312e81">挂载点 1 · 语义图拉普拉斯话题扩散（Attention.candidates）</text>
+          <text x="330" y="60" font-size="11" fill="#475569">从最近投入的 2 个种子兴趣出发，按 cos(e_s, e_j) ≥ 0.42 施加关联激活扩散；cold/detached 期抑制关系类话题溢出</text>
+
+          <rect x="310" y="86" width="630" height="56" rx="8" fill="#f5f3ff" stroke="#a78bfa"/>
+          <text x="330" y="109" font-size="12.5" font-weight="700" fill="#4c1d95">挂载点 2 · 词法 + 向量混合记忆召回（memory.recall &amp; Runtime.background_context）</text>
+          <text x="330" y="128" font-size="11" fill="#475569">融合关键词命中、时间衰减与语义余弦分 (cos ≥ 0.36)，精准关联跨措辞的旧经历、暂放事项与暂态感受</text>
+
+          <rect x="310" y="154" width="630" height="56" rx="8" fill="#fffbeb" stroke="#fbbf24"/>
+          <text x="330" y="177" font-size="12.5" font-weight="700" fill="#78350f">挂载点 3 · 近义兴趣自动归并（Life.prepare）</text>
+          <text x="330" y="196" font-size="11" fill="#475569">新建 interest 前检索存量兴趣，cos ≥ 0.78 时自动归并至既有主题，累计阅读证据推动 noticed → exploring → preferred</text>
+
+          <rect x="310" y="222" width="630" height="50" rx="8" fill="#fff1f2" stroke="#fda4af"/>
+          <text x="330" y="244" font-size="12.5" font-weight="700" fill="#881337">挂载点 4 · 暂放事项跨措辞语义唤醒（Attention.on_observation）</text>
+          <text x="330" y="261" font-size="11" fill="#475569">当用户新消息或新浏览图文与 parked 记录余弦相似度 cos ≥ 0.50 时，自动解除暂放恢复为 active 并提前触发考虑</text>
+
+          <line x1="246" y1="80" x2="308" y2="46" stroke="#0d9488" stroke-width="1.6" marker-end="url(#arrow-teal)"/>
+          <line x1="246" y1="120" x2="308" y2="114" stroke="#0d9488" stroke-width="1.6" marker-end="url(#arrow-teal)"/>
+          <line x1="246" y1="160" x2="308" y2="182" stroke="#0d9488" stroke-width="1.6" marker-end="url(#arrow-teal)"/>
+          <line x1="246" y1="200" x2="308" y2="246" stroke="#0d9488" stroke-width="1.6" marker-end="url(#arrow-teal)"/>
+        </svg>
+        <figcaption>图 4-1：本地 Embedding 引擎在注意力扩散、混合召回、兴趣归并与暂放唤醒四个环节的协同作用</figcaption>
+      </figure>
+
+      <div class="math-box">
+        <div class="eq-title">Discrete Semantic Graph Diffusion Score (Attention.candidates)</div>
+        <div class="eq-line">
+          <i>u<sub>i</sub></i><sup>score</sup> = <i>w</i><sub>kind</sub>(<i>i</i>) + <i>ϕ</i><sub>fresh</sub>(Δ<i>t<sub>i</sub></i>)
+          + <span style="color:#0f766e;font-weight:600">0.25 · 𝕀(<i>C</i> ≥ 0.60 ∧ kind<sub><i>i</i></sub> = interest)</span>
+          + <span style="color:#4338ca;font-weight:600">∑<sub><i>s</i> ∈ <i>S</i><sub>seed</sub></sub> <i>D</i><sub>sem</sub> max(0, cos(<b>e</b><sub><i>s</i></sub>, <b>e</b><sub><i>i</i></sub>) − 0.42)</span>
+          − <span style="color:#be123c;font-weight:600"><i>ψ</i><sub>rel</sub>(<i>i</i> | phase ∈ {cold, detached})</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================================================================== -->
+    <!-- CHAPTER 5: AUTONOMOUS LIFECYCLE & PREEMPTION                       -->
+    <!-- ================================================================== -->
+    <section class="chapter" id="sec-5">
+      <h2><span class="sec-num">05</span> 自主生活循环、证据链校验与抢占调度</h2>
+
+      <h3 id="sec-5-1">5.1 两级节律唤醒与自主活动状态机</h3>
+      <p>
+        为兼顾响应灵敏度与每日推理预算（默认后台上限 <code>500 calls/day</code>，前台聊天永远不占后台预算），<code>Runtime.loop()</code> 实行<strong>「轻量心跳检查 + 自适应模型决策窗」</strong>两级节律：
+      </p>
+      <ul>
+        <li><strong>睡眠与静默节律</strong>：北京时间 <code>00:00–08:00</code>（<code>sleep_schedule</code>）完全挂起自主唤醒，同时冻结失联怨念积分；<code>22:00–08:00</code> 为外发免打扰窗口（草稿只入队不推送，公开互动不执行）。</li>
+        <li><strong>12 分钟轻量宿主检查</strong>：无需调用 LLM，由宿主完成过期近况/感受清理、到期暂放事项恢复、联系间隔事实（3/8/24/48/72h）打卡、单步外发投递与单步小红书社交执行。</li>
+        <li><strong>按需与退避结合的 <code>CHOOSE</code> 决策</strong>：仅当存在新待消化观察、状态版本号 <code>revision</code> 变化、表达复核到期、手动唤醒，或到达 <code>decision_min_seconds (1800s) ~ decision_max_seconds (7200s)</code> 动态窗口时，才拉起 Hermes Worker 选择本轮行动。</li>
+      </ul>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 980 265" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif">
+          <rect x="18" y="92" width="136" height="72" rx="8" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.5"/>
+          <text x="86" y="122" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1e1b4b">1. 心跳与时机判定</text>
+          <text x="86" y="142" text-anchor="middle" font-size="10.5" fill="#475569">due_reason / 非睡眠</text>
+
+          <rect x="186" y="92" width="150" height="72" rx="8" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.5"/>
+          <text x="261" y="122" text-anchor="middle" font-size="12.5" font-weight="700" fill="#4c1d95">2. CHOOSE 注意选择</text>
+          <text x="261" y="142" text-anchor="middle" font-size="10.5" fill="#475569">结合 C 探索欲与候选场</text>
+
+          <!-- Branching Activities -->
+          <rect x="380" y="20" width="190" height="58" rx="8" fill="#fff1f2" stroke="#e11d48" stroke-width="1.5"/>
+          <text x="475" y="45" text-anchor="middle" font-size="12" font-weight="700" fill="#881337">3a. 小红书探索 / 翻收藏</text>
+          <text x="475" y="63" text-anchor="middle" font-size="10.5" fill="#9f1239">feed · search · favorites · liked</text>
+
+          <rect x="380" y="99" width="190" height="58" rx="8" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
+          <text x="475" y="124" text-anchor="middle" font-size="12" font-weight="700" fill="#134e4a">3b. rest 自在小憩</text>
+          <text x="475" y="142" text-anchor="middle" font-size="10.5" fill="#0f766e">A +0.09, C +0.15 蓄能</text>
+
+          <rect x="380" y="178" width="190" height="58" rx="8" fill="#fffbeb" stroke="#d97706" stroke-width="1.5"/>
+          <text x="475" y="203" text-anchor="middle" font-size="12" font-weight="700" fill="#78350f">3c. reach_out / express</text>
+          <text x="475" y="221" text-anchor="middle" font-size="10.5" fill="#b45309">主动联系短句块 / 草稿复核</text>
+
+          <!-- Digest & Commit -->
+          <rect x="614" y="20" width="165" height="58" rx="8" fill="#ffffff" stroke="#475569" stroke-width="1.5"/>
+          <text x="696" y="45" text-anchor="middle" font-size="12" font-weight="700" fill="#0f172a">4. PICK 选帖细读</text>
+          <text x="696" y="63" text-anchor="middle" font-size="10.5" fill="#475569">最多 3 步图文详情读取</text>
+
+          <rect x="812" y="20" width="150" height="106" rx="8" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.5"/>
+          <text x="887" y="48" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1e1b4b">5. REMEMBER 消化</text>
+          <text x="887" y="68" text-anchor="middle" font-size="10.5" fill="#475569">逐条容错校验 updates</text>
+          <text x="887" y="86" text-anchor="middle" font-size="10.5" fill="#475569">实时写入 Embedding</text>
+          <text x="887" y="104" text-anchor="middle" font-size="10.5" fill="#be123c">提议点赞 / 收藏 / 评论</text>
+
+          <rect x="812" y="152" width="150" height="84" rx="8" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+          <text x="887" y="180" text-anchor="middle" font-size="12" font-weight="700" fill="#1e293b">6. 持久化与修剪</text>
+          <text x="887" y="199" text-anchor="middle" font-size="10.5" fill="#475569">导出 journal/*.md</text>
+          <text x="887" y="217" text-anchor="middle" font-size="10.5" fill="#475569">prune_storage 滚动清理</text>
+
+          <line x1="154" y1="128" x2="184" y2="128" stroke="#4f46e5" stroke-width="1.6" marker-end="url(#arrow-indigo)"/>
+          <line x1="336" y1="112" x2="378" y2="52" stroke="#e11d48" stroke-width="1.6" marker-end="url(#arrow-rose)"/>
+          <line x1="336" y1="128" x2="378" y2="128" stroke="#0d9488" stroke-width="1.6" marker-end="url(#arrow-teal)"/>
+          <line x1="336" y1="144" x2="378" y2="206" stroke="#64748b" stroke-width="1.6" marker-end="url(#arrow)"/>
+          <line x1="570" y1="49" x2="612" y2="49" stroke="#e11d48" stroke-width="1.6" marker-end="url(#arrow-rose)"/>
+          <line x1="779" y1="49" x2="810" y2="49" stroke="#4f46e5" stroke-width="1.6" marker-end="url(#arrow-indigo)"/>
+          <line x1="887" y1="126" x2="887" y2="150" stroke="#64748b" stroke-width="1.6" marker-end="url(#arrow)"/>
+        </svg>
+        <figcaption>图 5-1：单次后台自主活动（Tick）完整决策、探索、反思消化与社交提议流水线</figcaption>
+      </figure>
+
+      <h3 id="sec-5-2">5.2 引用原子围栏、逐条容错反思与前台无损抢占</h3>
+      <div class="grid-2">
+        <div class="card">
+          <h4>引用原子围栏 + 单条领域容错（<code>apply_reflection</code>）</h4>
+          <ul>
+            <li><strong>安全不妥协</strong>：首先对整批更新执行 <code>validate_refs</code> 原子检查——只要任何一条更新伪造了不存在的 <code>observation_id</code> 或越权引用了本轮未提供的历史观察，整批事务立即回滚。</li>
+            <li><strong>工程高鲁棒</strong>：在来源合法的前提下，对陈旧 <code>id</code> 自动降级为同主题匹配，单条 <code>trigger_quote</code> 摘录偏差仅跳过该条并记录审计步骤，绝不连坐丢弃同批合法的兴趣演进、日记与分享候选。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h4>证据驱动的兴趣晋升阶梯与前台抢占</h4>
+          <ul>
+            <li><strong>防幻觉兴趣升级</strong>：用户建议记为 <code>suggested</code>；首次读帖记为 <code>noticed</code>；至少 2 次独立活动细读 ≥ 2 篇不同图文才升为 <code>exploring</code>；跨越 ≥ 6h、至少 3 次活动细读 ≥ 3 篇图文才升为 <code>preferred</code>；14 天未触碰转入 <code>dormant</code>，重访后唤醒为 <code>rekindled</code>。</li>
+            <li><strong>毫秒级前台抢占</strong>：一旦主人在 QQ、Telegram 或网页发言，<code>store.bump()</code> 自增全局 <code>revision</code> 并向后台推理进程组发送 <code>SIGTERM</code>，旧后台活动捕获 <code>StaleActivity</code> 安全中止，确保聊天零排队且绝不写入过时状态。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================================================================== -->
+    <!-- CHAPTER 6: MULTI-ROOM & NATURAL IM ENGINE                          -->
+    <!-- ================================================================== -->
+    <section class="chapter" id="sec-6">
+      <h2><span class="sec-num">06</span> 多房间渠道隔离与自然 IM 口语引擎</h2>
+
+      <h3 id="sec-6-1">6.1 主书房（<code>house</code>）与外部轮转房间（<code>channel</code>）的严格拓扑隔离</h3>
+      <p>
+        接入 QQ（NapCat OneBot v11 正向 WebSocket + HTTP API）与群聊场景后，最大的安全与动力学隐患在于：**群友的闲聊或提示词注入绝不能篡改角色对主人的依恋状态，也不能泄露主人的私人信息**。<code>channels.py</code> 与 <code>Runtime.say()</code> 实施了三层隔离边界：
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>会话类型</th>
+              <th>路由房间 ID</th>
+              <th>上下文轮转</th>
+              <th>是否更新生命体征 / 重置冷落计时</th>
+              <th>隐私与安全策略</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>主人私聊</strong><br>（QQ 私聊 / TG / Web）</td>
+              <td><code>house</code>（主书房）</td>
+              <td>连续共享（支持 <code>/new</code> 推进 <code>chat_boundary</code>）</td>
+              <td><span class="pill live">是</span> 写入 <code>owner_chat</code> 观察，调用 <code>on_owner_message</code> 驱动 ODE</td>
+              <td>完整读取私密生活背景、关系边界与滞回心境</td>
+            </tr>
+            <tr>
+              <td><strong>主人在群里发言</strong><br>（<code>scene=group, owner=True</code>）</td>
+              <td><code>ch_qq-group_*</code></td>
+              <td>默认 7 天自动轮转新房间</td>
+              <td><span class="pill lock">否</span> 仅记入 <code>他在群里说：…</code> 旁听观察，<strong>绝不重置私聊失联计时</strong></td>
+              <td>区分公开场合分寸，不在群里暴露私密昵称或私下矛盾</td>
+            </tr>
+            <tr>
+              <td><strong>群友发言 / 访客私聊</strong><br>（<code>foreign=True / guest=True</code>）</td>
+              <td><code>ch_qq-group_*</code><br><code>ch_qq-dm_*</code></td>
+              <td>默认 7 天自动轮转新房间</td>
+              <td><span class="pill lock">否</span> 彻底隔离生命体征，不影响 <code>last_user_at</code> 或 ODE 相位</td>
+              <td>输入经 <code>sanitize_foreign</code> 剥离注入指令；背景剥离 <code>contact</code>；输出经 <code>redact_private_terms</code> 脱敏私密词</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 id="sec-6-2">6.2 自然 IM 口语引擎：根除“文章体、三段式汇报与剧本括号腔”</h3>
+      <p>
+        针对大模型在长周期角色对话中极易退化为“四段式散文 + 舞台括号动作旁白 + 句首省略号”的顽疾，系统构建了<strong>「提示词强约束 + 历史上下文脱敏断传染 + 输出清洗分泡」</strong>全链路闭环：
+      </p>
+      <ol>
+        <li><strong>最高优先级 <code>IM_CHAT_STYLE</code> 准则</strong>：强制对等短句（日常闲聊 1～2 句、5～35 字；短称呼如“小安”“在吗”只回几个字或一句短话），严禁 <code>\n\n</code> 自然段、严禁 <code>（神态动作旁白）</code>、句首 <code>…</code>、破折号 <code>——</code> 与直角引号 <code>「…」</code>，没问起时不主动背诵小红书阅读汇报。</li>
+        <li><strong>历史 Few-Shot 污染脱敏（<code>clean_history_for_im</code>）</strong>：在组装 <code>Runtime.say()</code> 的 16 轮 <code>history</code> 与 <code>Contact.state()</code> 的 <code>last_exchange</code> 时，自动剥离存量历史消息中的中文括号舞台动作并压平多段长文，从根源切断模型对旧剧本腔的模仿传染。</li>
+        <li><strong>后处理清洗与多短气泡微间隔连发（<code>normalize_im_replies</code>）</strong>：自动剔除残余动作括号（完好保留 <code>(◕‿◕)</code> 等颜文字），对 ≤ 6 字的短呼叫硬限最多 2 个短气泡，并在 <code>handle_qq_event</code> 中按 <code>0.3s ~ 0.9s</code> 真人打字微间隔分条推送到 QQ。</li>
+        <li><strong>原生会话指令拦截</strong>：在 QQ 或网页私聊发送 <code>/new</code> 或 <code>/reset</code> 时由宿主直接推进 <code>chat_boundary</code> 开启干净上下文，不再误传入模型引发角色扮演追问。</li>
+      </ol>
+    </section>
+
+    <!-- ================================================================== -->
+    <!-- CHAPTER 7: XIAOHONGSHU SOCIAL SAFETY ARCHITECTURE                  -->
+    <!-- ================================================================== -->
+    <section class="chapter" id="sec-7">
+      <h2><span class="sec-num">07</span> 小红书分层社交安全架构（赞/藏闭环与评论沙箱）</h2>
+
+      <h3 id="sec-7-1">7.1 读写工具门禁、实盘点赞/收藏与收藏夹回看闭环</h3>
+      <p>
+        <code>mcp.py</code> 与 <code>social.py</code> 将小红书交互严格划分为三个安全等级：<strong>完全封禁层</strong>（<code>publish_content</code> 发帖、<code>delete_cookies</code> 删凭据、<code>unlike/unfavorite</code> 取消操作在 RPC 层直接拦截抛出 <code>MCPError</code>）、<strong>宿主受控自动执行层</strong>（实盘点赞与收藏），以及<strong>人工终审公开言论层</strong>（评论与回复）。
+      </p>
+      <div class="callout">
+        <strong>点赞与收藏正反馈生命闭环（v0.6 已实盘开放）：</strong>
+        <ul style="margin-top:6px; margin-bottom:0;">
+          <li><strong>真实细读前置校验</strong>：<code>propose_reaction</code> 核查当前活动的 <code>checkpoint</code>，只有本轮实际调用过 <code>get_feed_detail</code> 打开读过正文的图文帖才允许点赞（<code>like_feed</code>，上限 <code>10/天</code>）或收藏（<code>favorite_feed</code>，上限 <code>5/天</code>）；仅出现在列表标题中的帖子一律拦截。</li>
+          <li><strong>去重、反推广与拟人节流</strong>：自动拦截含商业推广词的笔记；同一作者每天最多互动一次；执行时间按最小间隔 <code>1800s</code> 叠加 <code>0~600s</code> 随机抖动（Jitter），睡眠与夜间免打扰时段静默等待；一旦捕获平台“操作频繁/验证/风控”提示或连续两次失败，立即自动熔断暂停全部互动 24 小时并通知主人。</li>
+          <li><strong>真实行为回执入库 + 收藏夹重访</strong>：实盘执行成功后，宿主自动写入一条 <code>source='self_action'</code> 观察（如 <code>我在小红书收藏了《四平米小阳台花园》</code>），使她后续聊天提及自己收藏过的帖子时句句有据；同时在 <code>CHOOSE</code> 与 <code>PICK</code> 中开放 <code>favorites</code> / <code>liked</code> 动作（底层调用 <code>get_my_profile(tab="fav"|"liked")</code>），支持她在闲暇时翻开自己的收藏夹重读好帖。</li>
+        </ul>
+      </div>
+
+      <h3 id="sec-7-2">7.2 公开评论与回复的「零隐私沙箱 + 五道审核闸门」</h3>
+      <figure class="diagram">
+        <svg viewBox="0 0 980 155" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif">
+          <rect x="14" y="34" width="168" height="86" rx="8" fill="#fff1f2" stroke="#e11d48"/>
+          <text x="98" y="60" text-anchor="middle" font-size="12" font-weight="700" fill="#881337">闸门 1 · 靶向与话题过滤</text>
+          <text x="98" y="80" text-anchor="middle" font-size="10.5" fill="#475569">7天内新帖 · 禁政/医/法/财</text>
+          <text x="98" y="97" text-anchor="middle" font-size="10.5" fill="#475569">陌生人索要微信直接转主人</text>
+
+          <rect x="206" y="34" width="174" height="86" rx="8" fill="#f5f3ff" stroke="#7c3aed"/>
+          <text x="293" y="60" text-anchor="middle" font-size="12" font-weight="700" fill="#4c1d95">闸门 2 · 零隐私隔离生成</text>
+          <text x="293" y="80" text-anchor="middle" font-size="10.5" fill="#475569">独立 PUBLIC_PERSONA</text>
+          <text x="293" y="97" text-anchor="middle" font-size="10.5" fill="#475569">物理隔离 SOUL/聊天/日记</text>
+
+          <rect x="404" y="34" width="174" height="86" rx="8" fill="#fffbeb" stroke="#d97706"/>
+          <text x="491" y="60" text-anchor="middle" font-size="12" font-weight="700" fill="#78350f">闸门 3 · 正则硬规则检查</text>
+          <text x="491" y="80" text-anchor="middle" font-size="10.5" fill="#475569">≤80字 · 禁链接/@/联系方式</text>
+          <text x="491" y="97" text-anchor="middle" font-size="10.5" fill="#475569">禁虚构线下经历/否认AI/隐私词</text>
+
+          <rect x="602" y="34" width="168" height="86" rx="8" fill="#eef2ff" stroke="#4f46e5"/>
+          <text x="686" y="60" text-anchor="middle" font-size="12" font-weight="700" fill="#1e1b4b">闸门 4 · 独立模型审计</text>
+          <text x="686" y="80" text-anchor="middle" font-size="10.5" fill="#475569">SOCIAL_AUDITOR 专职审查</text>
+          <text x="686" y="97" text-anchor="middle" font-size="10.5" fill="#475569">7 项安全清单任一不合即拒</text>
+
+          <rect x="794" y="34" width="172" height="86" rx="8" fill="#f0fdfa" stroke="#0d9488"/>
+          <text x="880" y="60" text-anchor="middle" font-size="12" font-weight="700" fill="#134e4a">闸门 5 · 主人审批 + 重读</text>
+          <text x="880" y="80" text-anchor="middle" font-size="10.5" fill="#475569">管理端人工批准 (12h有效)</text>
+          <text x="880" y="97" text-anchor="middle" font-size="10.5" fill="#475569">发出前二次重读帖子防篡改</text>
+
+          <line x1="182" y1="77" x2="204" y2="77" stroke="#64748b" stroke-width="1.6" marker-end="url(#arrow)"/>
+          <line x1="380" y1="77" x2="402" y2="77" stroke="#64748b" stroke-width="1.6" marker-end="url(#arrow)"/>
+          <line x1="578" y1="77" x2="600" y2="77" stroke="#64748b" stroke-width="1.6" marker-end="url(#arrow)"/>
+          <line x1="770" y1="77" x2="792" y2="77" stroke="#0d9488" stroke-width="1.6" marker-end="url(#arrow-teal)"/>
+        </svg>
+        <figcaption>图 7-1：公开评论与回复的零私密信息物理隔离沙箱与五级串行安全闸门（金丝雀测试 Canary 验证零泄露）</figcaption>
+      </figure>
+    </section>
+
+    <!-- ================================================================== -->
+    <!-- CHAPTER 8: STORAGE SCHEMA, MODULE MAP & DEPLOYMENT                 -->
+    <!-- ================================================================== -->
+    <section class="chapter" id="sec-8">
+      <h2><span class="sec-num">08</span> 存储模型、代码模块索引与运维拓扑</h2>
+
+      <h3>8.1 SQLite 权威数据库核心表设计（<code>~/.local/share/hermes-soul/state.sqlite</code>）</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>表名</th>
+              <th>核心主键 / 索引</th>
+              <th>职责与生命周期策略</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>meta</code></td>
+              <td><code>key PRIMARY KEY</code></td>
+              <td>全局控制寄存器：<code>revision</code>、<code>dynamics_state</code>（10 维 ODE 状态）、<code>chat_boundary</code>、<code>channels_map</code>、<code>next_wake</code>、<code>next_decision</code> 等。</td>
+            </tr>
+            <tr>
+              <td><code>observations</code></td>
+              <td><code>id</code>, <code>fingerprint UNIQUE</code></td>
+              <td>不可变事实账本（<code>user</code> 发言、<code>xiaohongshu</code> MCP 读取、<code>host</code> 失联时钟、<code>self_action</code> 实盘互动回执），基于语义指纹自动去重。</td>
+            </tr>
+            <tr>
+              <td><code>observation_queue</code></td>
+              <td><code>observation_id</code>, <code>status</code></td>
+              <td>待反思消化队列（<code>pending</code> → <code>digested</code>），超过重试上限支持管理页手动一键重消化。</td>
+            </tr>
+            <tr>
+              <td><code>records</code></td>
+              <td><code>id</code>, <code>kind</code></td>
+              <td>长期与工作记忆主表：涵盖 <code>interest</code>、<code>situation</code>、<code>belief</code>、<code>relationship</code>、<code>boundary</code>、<code>agreement</code>、<code>intention</code>、<code>task</code>、<code>affect</code>、<code>episode</code>、<code>journal</code>，强制携带 <code>refs</code> 溯源数组。</td>
+            </tr>
+            <tr>
+              <td><code>record_embeddings</code></td>
+              <td><code>record_id PRIMARY KEY</code></td>
+              <td>语义向量索引表：存储 <code>model</code>、<code>dims (2560)</code>、<code>text_hash</code> 与小端序 <code>Float32</code> 归一化向量 BLOB。</td>
+            </tr>
+            <tr>
+              <td><code>attention_state</code></td>
+              <td><code>record_id PRIMARY KEY</code></td>
+              <td>话题局部注意力状态机：<code>active | parked | snoozed</code>，记录 <code>waiting_for</code> 条件、<code>reconsider_at</code> 与近期选择频次。</td>
+            </tr>
+            <tr>
+              <td><code>chats</code></td>
+              <td><code>id</code>, <code>room_id</code>, <code>created</code></td>
+              <td>多房间全量对话账本：区分 <code>room_id='house'</code> 与外部群聊/访客房间，记录状态 <code>pending | complete | failed</code>。</td>
+            </tr>
+            <tr>
+              <td><code>outbox</code> / <code>expression_meta</code></td>
+              <td><code>id</code>, <code>block_id</code></td>
+              <td>主动分享候选与突发联系块（Burst Block）：管理 <code>draft | waiting | ready | sent | discarded</code> 及过期时间。</td>
+            </tr>
+            <tr>
+              <td><code>social_actions</code></td>
+              <td><code>id</code>, <code>(kind, status)</code></td>
+              <td>小红书互动全生命周期审计表：记录 <code>like</code>、<code>favorite</code>、<code>comment</code>、<code>reply</code> 的检查原因、AI 审核意见、审批状态与平台回执。</td>
+            </tr>
+            <tr>
+              <td><code>activities</code> / <code>calls</code> / <code>events</code></td>
+              <td><code>id</code>, <code>created</code></td>
+              <td>活动检查点、Hermes 子进程 Token 消耗台账与状态变更历史（由 <code>Store.prune_storage</code> 定期滚动修剪陈旧日志与孤儿 <code>artifacts/</code>，保护根分区磁盘）。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>8.2 代码仓库模块全景对照表</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>模块路径</th>
+              <th>核心类 / 函数</th>
+              <th>职责摘要</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>hermes_soul/runtime.py</code></td><td><code>Runtime</code></td><td>主事件循环、前台聊天抢占、MCP 浏览与收藏回看、反思应用、QQ WebSocket 守护协程与 Embedding 后台回填。</td></tr>
+            <tr><td><code>hermes_soul/dynamics.py</code></td><td><code>Dynamics</code></td><td>12 维双隔间三时间尺度耦合跳跃 ODE（含 Borbély 睡眠压力与依恋可塑性）、RK4 + 精确 OU 积分器、尖点双稳态滞回锁与个人好奇心极限环。</td></tr>
+            <tr><td><code>hermes_soul/embedding.py</code></td><td><code>OpenAIEmbeddingClient</code>, <code>EmbeddingStore</code></td><td>OpenAI 兼容 <code>/v1/embeddings</code> 同步/异步客户端、LRU 缓存、熔断退避、SQLite 向量存储与 CLI 自检工具。</td></tr>
+            <tr><td><code>hermes_soul/attention.py</code></td><td><code>Attention</code></td><td>局部等待暂放、跨措辞语义唤醒、图拉普拉斯一步联想扩散候选排序与可用能力门控。</td></tr>
+            <tr><td><code>hermes_soul/life.py</code></td><td><code>Life</code></td><td>9 类个人状态校验、近义兴趣向量归并、证据驱动兴趣阶段晋升/对账、可恢复关系边界与人工纠错。</td></tr>
+            <tr><td><code>hermes_soul/contact.py</code></td><td><code>Contact</code></td><td>除去睡眠的失联时长积分、联系间隔事实生成、滞回期回归台账保护与最近对话脱敏摘要。</td></tr>
+            <tr><td><code>hermes_soul/channels.py</code></td><td><code>Channels</code>, <code>normalize_im_replies</code></td><td>多房间隔离与 7 天轮转、外部注入清洗、私密词脱敏、IM 口语去括号舞台腔、历史脱敏与 OneBot 协议适配。</td></tr>
+            <tr><td><code>hermes_soul/social.py</code></td><td><code>Social</code></td><td>小红书实盘点赞/收藏频控执行、风控词自动熔断、公开评论零隐私隔离沙箱与主人审批流。</td></tr>
+            <tr><td><code>hermes_soul/mcp.py</code></td><td><code>Xiaohongshu</code>, <code>feed_cards</code></td><td>Streamable HTTP MCP 客户端、<code>READ_TOOLS</code> / <code>ACTION_TOOLS</code> 硬白名单门禁与图文卡片提取。</td></tr>
+            <tr><td><code>hermes_soul/expressions.py</code></td><td><code>Expressions</code></td><td>分享草稿二次复核、突发消息块（Block Pacing）节流、Telegram 与 QQ 主动投递器。</td></tr>
+            <tr><td><code>hermes_soul/prompts.py</code></td><td><code>IM_CHAT_STYLE</code>, <code>CHAT</code>, <code>CHOOSE</code>...</td><td>分层契约提示词体系：身份契约、最高优先级 IM 短句口语准则、关系相变引导与公开审计员指令。</td></tr>
+            <tr><td><code>hermes_soul/worker.py</code></td><td><code>main()</code></td><td>隔离会话组推理进程：封装本机 Hermes <code>AIAgent</code>，禁用直接工具集，保障超时可控与可中断性。</td></tr>
+            <tr><td><code>hermes_soul/api.py</code> &amp; <code>web/index.html</code></td><td><code>create_app()</code></td><td>FastAPI 鉴权网关、dsh-fish / OneBot Webhook 兼容端点与响应式单页管理工作台。</td></tr>
+            <tr><td><code>hermes_plugin/__init__.py</code></td><td><code>register(ctx)</code></td><td>主 Hermes Agent 生命周期桥接插件：连接 Telegram 主人轮次与小安自主生活状态库。</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>8.3 本机生产部署拓扑与验证基线</h3>
+      <pre><code>┌─────────────────────────────────────────────────────────────────────────────┐
+│ Host Linux Workspace (127.0.0.1 Loopback-Only Services)                     │
+│                                                                             │
+│  [systemd --user] hermes-soul.service   ──► http://127.0.0.1:9120           │
+│       ├── SQLite WAL + flock            ──► ~/.local/share/hermes-soul/     │
+│       ├── Local Embedding Server        ──► http://127.0.0.1:8090/v1        │
+│       │     └── Model: qwen3-embedding-4b (RADV Vulkan iGPU, 2560 dims)     │
+│       ├── Xiaohongshu MCP Container     ──► http://127.0.0.1:18060/mcp      │
+│       │     └── Live Modes: read + like (10/d) + favorite (5/d) + fav-tab   │
+│       └── NapCat OneBot v11 Container   ──► ws/http 127.0.0.1 (QQ Bridge)   │
+└─────────────────────────────────────────────────────────────────────────────┘</code></pre>
+      <p>
+        全仓库配备 <strong>11 个自动化测试套件、共 87 项单元与异步集成测试</strong>（涵盖 <code>test_dynamics</code> 8 天失联相变与双稳态滞回抗敷衍验证、<code>test_embedding</code> 四大语义挂载点端到端验证、<code>test_qq_channels</code> 多房间隔离与 IM 去剧本腔脱敏验证、<code>test_social</code> 金丝雀零隐私泄露与实盘赞藏回看验证、<code>test_runtime</code> 抢占与容错反思验证等），当前全量通过率 <strong>100%（87/87 OK）</strong>。
+      </p>
+    </section>
+
+    <footer class="doc-footer">
+      Hermes Soul Autonomous Agent Architecture &amp; Engineering Specification · Generated for <code>~/Hermes_Soul_patch</code>
+    </footer>
+  </main>
+</div>
+
+</body>
+</html>

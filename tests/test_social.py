@@ -1,24 +1,30 @@
+from datetime import datetime, timedelta
 import json
 from pathlib import Path
 import tempfile
 import time
 import unittest
 from unittest.mock import AsyncMock, patch
+from zoneinfo import ZoneInfo
 from hermes_soul.mcp import Xiaohongshu, MCPError
 from hermes_soul.runtime import Runtime
 from hermes_soul.store import encode
 
 CANARY = "金丝雀-7f3a"
-# 2026-10-14 15:00 Asia/Shanghai, outside sleep and quiet hours
-AFTERNOON = 1792047600.0
+
+
+def _next_shanghai_afternoon():
+    tz = ZoneInfo("Asia/Shanghai")
+    now_dt = datetime.fromtimestamp(time.time(), tz)
+    return (now_dt + timedelta(days=1)).replace(hour=15, minute=0, second=0, microsecond=0).timestamp()
+
+
+# Tomorrow 15:00 Asia/Shanghai, outside sleep and quiet hours
+AFTERNOON = _next_shanghai_afternoon()
 
 
 class SocialTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        # Pin the clock so records created during setup line up with the AFTERNOON steps below.
-        clock = patch('time.time', return_value=AFTERNOON)
-        clock.start()
-        self.addCleanup(clock.stop)
         self.temp = tempfile.TemporaryDirectory()
         home = Path(self.temp.name)
         token = home / "bot-token"
@@ -233,6 +239,67 @@ class SocialTests(unittest.IsolatedAsyncioTestCase):
             self.x.add('reply', 'sent', target_user='u9', target_comment_id='old%d' % i, feed_id='p1', content='好呀%d' % i,
                        executed_at=time.time() - 3 * 86400)
         self.assertEqual(self.x.incoming({'items': [{'comment_id': 'c9', 'feed_id': 'p1', 'user_id': 'u9', 'content': '那你呢'}]}), [])
+
+    async def test_live_like_favorite_execution_and_collections_browsing(self):
+        # 1. Default social modes enable live like & favorite while keeping comment & reply in dry_run
+        self.cfg['social'] = {'enabled': True, 'jitter_seconds': 0}
+        self.assertEqual(self.x.mode('like'), 'live')
+        self.assertEqual(self.x.mode('favorite'), 'live')
+        self.assertEqual(self.x.mode('comment'), 'dry_run')
+        self.assertEqual(self.x.mode('reply'), 'dry_run')
+        caps = self.r.background_context()['capabilities']['available']
+        self.assertIn('xiaohongshu_like', caps)
+        self.assertIn('xiaohongshu_favorite', caps)
+        self.assertIn('xiaohongshu_my_collections', caps)
+
+        # 2. Live execution of like_feed and favorite_feed + self_action receipt observations
+        aid, _ = self.read_post('fav1', title='四平米小阳台花园', author='花匠')
+        lid = self.x.propose_reaction(aid, 'like', 'fav1', '花园布局好看')
+        fid = self.x.propose_reaction(aid, 'favorite', 'fav1', '留着以后参考')
+        self.r.mcp_ready = True
+        self.r.mcp.call = AsyncMock(side_effect=[
+            {'content': [{'type': 'text', 'text': '点赞成功'}]},
+            {'content': [{'type': 'text', 'text': '收藏成功'}]},
+        ])
+        with patch('time.time', return_value=AFTERNOON), patch.object(self.x, 'notify_owner', new=AsyncMock()):
+            await self.r.social_step()
+            await self.r.social_step()
+        self.assertEqual(self.x.get(lid)['status'], 'sent')
+        self.assertEqual(self.x.get(fid)['status'], 'sent')
+        called_tools = [(c.args[0], c.args[1], c.kwargs.get('action')) for c in self.r.mcp.call.await_args_list]
+        self.assertEqual(
+            called_tools,
+            [
+                ('like_feed', {'feed_id': 'fav1', 'xsec_token': 'tok-fav1'}, True),
+                ('favorite_feed', {'feed_id': 'fav1', 'xsec_token': 'tok-fav1'}, True),
+            ],
+        )
+        self_obs = [json.loads(r[0])['text'] for r in self.s.db.execute("SELECT payload FROM observations WHERE source='self_action' ORDER BY created").fetchall()]
+        self.assertIn('我在小红书点赞了《四平米小阳台花园》', self_obs)
+        self.assertIn('我在小红书收藏了《四平米小阳台花园》', self_obs)
+
+        # 3. Revisiting saved favorites via browse(source='favorites') -> get_my_profile(tab='fav')
+        aid_b = self.s.start_activity('browse', '翻看收藏夹')
+        fav_card = {'id': 'fav1', 'xsecToken': 'tok-fav1', 'noteCard': {'displayTitle': '四平米小阳台花园', 'type': 'normal', 'user': {'nickname': '花匠'}}}
+        self.r.mcp.call = AsyncMock(side_effect=[
+            {'structuredContent': {'feeds': [fav_card]}},
+            {'structuredContent': {'data': {'note': {'noteId': 'fav1', 'type': 'normal', 'title': '四平米小阳台花园', 'desc': '薄荷和迷迭香'}}}},
+        ])
+        self.r.model = AsyncMock(side_effect=[
+            '{"action":"read","feed_id":"fav1","reason":"重读收藏的阳台笔记"}',
+            '{"action":"stop","reason":"看完了"}',
+        ])
+        refs = await self.r.browse(aid_b, {'activity': 'browse', 'source': 'favorites', 'query': ''}, self.s.get('revision'))
+        self.assertEqual(len(refs), 2)
+        self.assertEqual(self.r.mcp.call.await_args_list[0].args, ('get_my_profile', {'tab': 'fav'}))
+
+        # 4. Mode toggle & persistence via Social.set_modes
+        cfg_file = Path(self.temp.name) / 'config.yaml'
+        cfg_file.write_text('social:\n  enabled: true\n')
+        self.cfg['config_path'] = str(cfg_file)
+        self.x.set_modes({'like': 'dry_run', 'favorite': {'mode': 'live', 'per_day': 6}})
+        self.assertEqual(self.x.mode('like'), 'dry_run')
+        self.assertEqual(self.x.policy('favorite')['per_day'], 6)
 
 
 if __name__ == '__main__':

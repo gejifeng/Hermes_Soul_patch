@@ -7,10 +7,14 @@ import sys
 
 
 def main():
-    request = json.load(sys.stdin)
+    if len(sys.argv) > 1 and Path(sys.argv[1]).is_file():
+        request = json.loads(Path(sys.argv[1]).read_text())
+    else:
+        request = json.load(sys.stdin)
     cfg = request["config"]
     os.environ["HERMES_HOME"] = cfg["hermes_home"]
     sys.path.insert(0, cfg["hermes_root"])
+    import hermes_bootstrap  # noqa: F401
     from dotenv import load_dotenv
     load_dotenv(Path(cfg["hermes_home"]) / ".env", override=False)
     from run_agent import AIAgent

@@ -153,6 +153,81 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.r.model.assert_awaited_once()
         self.assertEqual(self.r.store.rows("records"), [])
 
+    async def test_apply_reflection_repairs_bad_id_and_isolates_quote_mismatch(self):
+        """Optimization 2: Stale/wrong-kind id falls back to label matching, and paraphrased affect quote is skipped
+        individually without aborting valid updates or journal.
+        """
+        oid = self.r.store.observe("xiaohongshu", "n1", {"text": "桂花拿铁配方很香", "tool": "get_feed_detail"})
+        belief_id = self.r.store.record("belief", "咖啡", {"content": "喜欢热饮", "state": "active"}, [oid])
+        aid = self.r.store.start_activity("browse", "看看")
+        self.r.apply_reflection(aid, {
+            "impression": "闻到桂花香的感觉",
+            "journal": "今天记下了桂花拿铁的做法。",
+            "updates": [
+                # Wrong-kind id (points to a belief instead of interest) -> repaired & saved!
+                {"id": belief_id, "kind": "interest", "label": "桂花拿铁", "content": "想试试桂花拿铁", "refs": [oid]},
+                # Paraphrased trigger_quote not verbatim in observation -> skipped individually!
+                {"kind": "affect", "label": "嘴馋", "content": "想喝咖啡", "trigger_quote": "不存在的改写原文", "scope": "咖啡", "refs": [oid]},
+            ],
+        }, [oid], self.r.store.get("revision"))
+        kinds = {r["kind"]: r for r in self.r.store.rows("records")}
+        self.assertIn("interest", kinds)
+        self.assertIn("journal", kinds)
+        self.assertIn("episode", kinds)
+        self.assertNotIn("affect", kinds)
+        step_statuses = [(s["stage"], s["status"]) for s in self.r.store.steps(aid)]
+        self.assertIn(("update", "repaired"), step_statuses)
+        self.assertIn(("update", "skipped"), step_statuses)
+
+    async def test_failed_tick_does_not_inflate_rest_streak_and_reconciles_interests_and_storage(self):
+        """Optimizations 4 & 5: Failed wakeups do not inflate rest_streak; corrupted preferred interests are reconciled;
+        prune_storage cleans backoff/bridge/call-dir bloat while preserving observation JSON artifacts.
+        """
+        # 1. Failed tick does not increment rest_streak
+        self.r.model = AsyncMock(side_effect=RuntimeError("model timeout"))
+        await self.r.tick()
+        self.assertEqual(self.r.store.rows("activities")[0]["status"], "failed")
+        self.assertEqual(self.r.store.get("rest_streak", 0), 0)
+
+        # 2. Reconcile bulk-inflated preferred interest (1 ref, no visit_activities) back to noticed
+        oid = self.r.store.observe("xiaohongshu", "n2", {"text": "阳台薄荷", "tool": "get_feed_detail"})
+        rid = self.r.store.record("interest", "薄荷", {"content": "薄荷", "state": "preferred", "evidence_count": 1}, [oid])
+        self.r.store.set("interest_reconciled_v1", 0)
+        self.r.life.reconcile_interests()
+        self.assertEqual(self.r.life.get_record(rid)["payload"]["state"], "noticed")
+
+        # 3. Storage hygiene: tool_backoff deleted on success; old call scratch dirs & zombie keys pruned, JSON kept
+        aid = self.r.store.start_activity("browse", "清理测试")
+        self.r.mcp.call = AsyncMock(side_effect=[MCPError("context deadline exceeded"),
+                                                 {"content": [{"type": "text", "text": '{"feeds":[]}'}]}])
+        with self.assertRaises(MCPError):
+            await self.r.mcp_observation(aid, "list_feeds", {})
+        backoff_keys = [r[0] for r in self.r.store.db.execute("SELECT key FROM meta WHERE key LIKE 'tool_backoff:%'").fetchall()]
+        self.assertEqual(len(backoff_keys), 1)
+        # Expire backoff and succeed -> key is deleted completely
+        self.r.store.set(backoff_keys[0], {"attempts": 1, "until": 1})
+        await self.r.mcp_observation(aid, "list_feeds", {})
+        self.assertEqual(self.r.store.db.execute("SELECT count(*) FROM meta WHERE key LIKE 'tool_backoff:%'").fetchone()[0], 0)
+
+        # Create old scratch dir vs JSON evidence file + 205 finished bridge keys
+        art_dir = self.r.store.home / "artifacts"
+        old_scratch = art_dir / "deadbeef1234"
+        old_scratch.mkdir(parents=True, exist_ok=True)
+        evidence_json = art_dir / "keep_evidence.json"
+        evidence_json.write_text('{"ok":true}')
+        import os
+        old_ts = 1700000000
+        os.utime(old_scratch, (old_ts, old_ts))
+        os.utime(evidence_json, (old_ts, old_ts))
+        self.r.store.set("tool_backoff:empty", {})
+        for idx in range(205):
+            self.r.store.set(f"bridge:t:{idx:04d}", {"done": True, "observation_id": f"o{idx}"})
+        stats = self.r.store.prune_storage(artifact_retention_days=14, now=1800000000)
+        self.assertFalse(old_scratch.exists())
+        self.assertTrue(evidence_json.exists())
+        self.assertGreaterEqual(stats["removed_meta"], 6)
+        self.assertEqual(stats["removed_artifact_dirs"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

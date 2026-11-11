@@ -29,22 +29,22 @@ persona:
   interests: 生活、植物、城市漫步、读书
 
 delivery:
-  mode: draft             # telegram 表示真实发送；draft 只留草稿
+  mode: draft             # draft 只留草稿；telegram 或 qq 表示真实外发
   authorized: false       # 确认后改为 true 才会外发
-  chat_id: ""             # 必须属于 bridge_owner_ids
+  chat_id: ""             # Telegram chat_id 或主人 QQ 号
   token_file: ~/.config/hermes-soul/telegram.token
   quiet_start: 22
   quiet_end: 8
-  # 按块发送：块与块之间至少 min_interval_seconds；块内（如「在吗？」后再追一句）
-  # 只需 block_gap_seconds，每块最多 max_per_block 条，全天最多 max_per_day 条。
+  # 按块发送：块与块之间至少 min_interval_seconds；块内只需 block_gap_seconds，
+  # 每块最多 max_per_block 条，全天最多 max_per_day 条。
   min_interval_seconds: 3600
   block_gap_seconds: 150
   max_per_block: 4
   max_per_day: 32
 
-# 主人多久（除去睡眠时段）没消息时，宿主记录一次联系间隔事实，可引发想念/情绪与主动联系。
+# 主人多久（除去睡眠时段）没消息时，宿主记录一次联系间隔事实，结合 12D ODE 引发想念/情绪与相变。
 contact:
-  gap_hours: [3, 8, 24, 48, 72]
+  gap_hours: [3, 8, 24, 48, 72, 120, 168]
 
 sleep_schedule:
   enabled: true
@@ -52,7 +52,7 @@ sleep_schedule:
   end: "08:00"
   timezone: Asia/Shanghai
 
-# 轻量检查仍每12分钟；没有新信息时，模型重新考虑逐渐延后。
+# 轻量检查仍每 12 分钟；没有新信息时，模型重新考虑逐渐延后。
 decision_min_seconds: 1800
 decision_max_seconds: 7200
 expression_review_min_seconds: 21600
@@ -71,6 +71,48 @@ social:
   suspend_seconds: 86400
   kinds:
     like:     {mode: dry_run, per_day: 10, min_interval_seconds: 1800}
-    favorite: {mode: dry_run, per_day: 3,  min_interval_seconds: 1800}
+    favorite: {mode: dry_run, per_day: 5,  min_interval_seconds: 1800}
     comment:  {mode: dry_run, per_day: 3,  min_interval_seconds: 7200}
     reply:    {mode: dry_run, per_day: 5,  min_interval_seconds: 7200}
+
+# 多间房与 QQ / OneBot v11 (NapCat / LLOneBot / dsh-fish 兼容桥) 接入配置（默认关闭）
+# - 主人私聊（scene=private, owner=true）自动汇入主书房 house，共享记忆与 12D 心境动力学
+# - 群聊（scene=group）与访客（guest=true）分居独立房间，默认 7 天轮转，绝不重置主人冷落计时
+# - 主人在群里发言（scene=group, owner=true）记一条「TA在群里说：…」观察进入记忆，但不作为私聊联系
+rooms:
+  group_rotate_days: 7
+
+qq:
+  enabled: false
+  owner_ids: []            # 主人的 QQ 号（字符串列表）
+  onebot_http_url: ""      # 可选：NapCat / OneBot v11 HTTP 地址（如 http://127.0.0.1:3000）
+  ws_url: ""               # 可选：OneBot v11 正向 WebSocket 地址（如 ws://127.0.0.1:3001）
+  onebot_token: ""         # 可选：OneBot HTTP/WS Bearer Token
+  webhook_token: ""        # 可选：/api/qq/webhook 专用 Bearer Token（默认复用 access_token_file）
+  require_token: true
+  typing_simulation: true  # 发送前模拟真实打字与「欲言又止」输入状态（OneBot /set_input_status）
+  group_require_at: true   # 群聊是否仅在 @角色 或包含触发词时回复
+  triggers: ["小安"]       # 群聊触发词
+  private_terms: []        # 群聊/访客回复中自动脱敏的私密词（如未填则复用 social.private_terms）
+  tts:
+    enabled: false         # 可选：深夜/亲密短句通过 OpenAI 兼容 /v1/audio/speech 合成语音气泡
+    base_url: ""           # 例如 http://127.0.0.1:8091/v1
+    model: "tts-1"
+    voice: "alloy"
+
+# OpenAI 兼容 Embedding 接口（POST /v1/embeddings，默认关闭）：
+# 开启后驱动混合语义召回、近义兴趣归并、暂放话题语义唤醒、跨天约定履约匹配与图拉普拉斯话题扩散。
+# 兼容本地自建推理（llama-server / vLLM / SGLang / HuggingFace TEI / Ollama /v1）与云厂商 API。
+# 可用 `python -m hermes_soul.embedding --config ~/.config/hermes-soul/config.yaml` 自检连通性。
+embedding:
+  enabled: false
+  base_url: "http://127.0.0.1:8090/v1/embeddings"
+  model: "qwen3-embedding-4b"
+  api_key_file: ""         # 推荐：存放 Bearer Key 的本地文件路径（本地无鉴权服务可留空）
+  api_key_env: ""          # 可选：环境变量名，例如 EMBEDDING_API_KEY
+  api_key: ""              # 可选：直接填写或 ${ENV_VAR}
+  dimensions: 0            # 可选：Matryoshka 截断维度（0 表示使用模型默认维度）
+  batch_size: 32
+  timeout_seconds: 20
+  backoff_seconds: 60
+  trust_env: false

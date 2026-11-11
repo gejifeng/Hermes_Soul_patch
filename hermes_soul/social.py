@@ -12,17 +12,17 @@ import re
 import time
 import uuid
 import httpx
+from .prompts import render
 
 from .evidence import compact_content, date_text
 from .schedule import sleep_until
-from .prompts import render
 from .store import encode
 
 ZONE = ZoneInfo("Asia/Shanghai")
 TOOLS = {"like": "like_feed", "favorite": "favorite_feed", "comment": "post_comment_to_feed", "reply": "reply_notification"}
 DEFAULTS = {
-    "like": {"mode": "dry_run", "per_day": 10, "min_interval_seconds": 1800},
-    "favorite": {"mode": "dry_run", "per_day": 3, "min_interval_seconds": 1800},
+    "like": {"mode": "live", "per_day": 10, "min_interval_seconds": 1800},
+    "favorite": {"mode": "live", "per_day": 5, "min_interval_seconds": 1800},
     "comment": {"mode": "dry_run", "per_day": 3, "min_interval_seconds": 7200},
     "reply": {"mode": "dry_run", "per_day": 5, "min_interval_seconds": 7200},
 }
@@ -407,3 +407,36 @@ class Social:
         self.s.set("social_suspended_until", 0)
         self.s.set("social_failure_streak", 0)
         self.s.event("social_resumed", {})
+
+    def set_modes(self, payload):
+        import yaml
+        social_cfg = dict(self.cfg.get("social") or {})
+        if "enabled" in payload:
+            social_cfg["enabled"] = bool(payload["enabled"])
+        kinds_cfg = {k: dict(v) for k, v in (social_cfg.get("kinds") or {}).items() if isinstance(v, dict)}
+        modes_in = payload.get("modes") if isinstance(payload.get("modes"), dict) else payload
+        for kind in TOOLS:
+            if kind in modes_in:
+                val = modes_in[kind]
+                mode = val.get("mode") if isinstance(val, dict) else str(val).strip()
+                if mode not in {"off", "dry_run", "live"}:
+                    raise ValueError(f"不支持的互动模式: {mode}")
+                entry = dict(kinds_cfg.get(kind) or DEFAULTS[kind])
+                entry["mode"] = mode
+                if isinstance(val, dict) and "per_day" in val:
+                    entry["per_day"] = max(0, min(100, int(val["per_day"])))
+                kinds_cfg[kind] = entry
+        social_cfg["kinds"] = kinds_cfg
+        self.cfg["social"] = social_cfg
+        config_path = self.cfg.get("config_path")
+        if config_path and Path(config_path).exists():
+            path = Path(config_path)
+            disk_data = yaml.safe_load(path.read_text()) or {}
+            disk_social = dict(disk_data.get("social") or {})
+            disk_social["enabled"] = social_cfg.get("enabled", True)
+            disk_social["kinds"] = kinds_cfg
+            disk_data["social"] = disk_social
+            tmp = path.with_suffix(".yaml.tmp")
+            tmp.write_text(yaml.safe_dump(disk_data, allow_unicode=True, sort_keys=False))
+            tmp.replace(path)
+        self.s.event("operator_social_modes", {"enabled": social_cfg.get("enabled"), "modes": {k: self.mode(k) for k in TOOLS}})

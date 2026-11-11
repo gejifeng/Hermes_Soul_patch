@@ -1,1 +1,1 @@
-"""Interest-led continuous life runtime for a Hermes companion."""
+"""Interest-led continuous life runtime on Hermes. No dependency on Cognitive."""

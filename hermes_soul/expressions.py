@@ -22,16 +22,24 @@ class Expressions:
         self.s, self.cfg = store, config
         self.delivery = config.get("delivery", {})
         columns = {r[1] for r in self.s.db.execute("PRAGMA table_info(expression_meta)")}
-        # Additive: a block is a short burst of messages sent minutes apart.
-        for name, decl in (("origin", "TEXT NOT NULL DEFAULT 'reflection'"), ("block_id", "TEXT"), ("block_seq", "INTEGER NOT NULL DEFAULT 0")):
+        # Additive: a block is a short burst of messages sent minutes apart; media_url/share_url attach rich post shares.
+        for name, decl in (
+            ("origin", "TEXT NOT NULL DEFAULT 'reflection'"),
+            ("block_id", "TEXT"),
+            ("block_seq", "INTEGER NOT NULL DEFAULT 0"),
+            ("media_url", "TEXT NOT NULL DEFAULT ''"),
+            ("share_url", "TEXT NOT NULL DEFAULT ''"),
+        ):
             if name not in columns:
                 self.s.db.execute(f"ALTER TABLE expression_meta ADD COLUMN {name} {decl}")
 
-    def create(self, text, refs, revision, *, origin="reflection", block_id=None, seq=0):
+    def create(self, text, refs, revision, *, origin="reflection", block_id=None, seq=0, media_url="", share_url=""):
         self.s.valid_refs(refs)
         text = text.strip()[:2000]
         if not text:
             return None
+        media_url = str(media_url or "").strip()[:1000]
+        share_url = str(share_url or "").strip()[:1000]
         # A repeated "在吗？" in a later burst is a new message, not a duplicate idea.
         for old in (self.s.rows("outbox", 500) if origin != "reach_out" else []):
             if fingerprint(old["content"]) == fingerprint(text):
@@ -39,14 +47,16 @@ class Expressions:
         eid, now = uuid.uuid4().hex, time.time()
         self.s.db.execute("INSERT INTO outbox(id,content,refs,created,status,revision) VALUES(?,?,?,?,?,?)",
                           (eid, text, encode(refs), now, "draft", revision))
-        self.s.db.execute("INSERT INTO expression_meta(id,updated,not_before,expires,reason,origin,block_id,block_seq) VALUES(?,?,?,?,?,?,?,?)",
-                          (eid, now, now, now+7*86400, "刚产生的表达，尚待判断时机", origin, block_id or eid, seq))
-        self.s.event("expression_created", {"id": eid, "refs": refs})
+        self.s.db.execute(
+            "INSERT INTO expression_meta(id,updated,not_before,expires,reason,origin,block_id,block_seq,media_url,share_url) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (eid, now, now, now+7*86400, "刚产生的表达，尚待判断时机", origin, block_id or eid, seq, media_url, share_url),
+        )
+        self.s.event("expression_created", {"id": eid, "refs": refs, "has_media": bool(media_url)})
         return eid
 
     def rows(self):
         result = []
-        for r in self.s.db.execute("SELECT o.*,m.updated,m.not_before,m.expires,m.reason,m.reviewed_revision,m.receipt,m.origin,coalesce(m.block_id,o.id) AS block_id,m.block_seq FROM outbox o JOIN expression_meta m ON o.id=m.id ORDER BY o.created DESC LIMIT 100"):
+        for r in self.s.db.execute("SELECT o.*,m.updated,m.not_before,m.expires,m.reason,m.reviewed_revision,m.receipt,m.origin,coalesce(m.block_id,o.id) AS block_id,m.block_seq,coalesce(m.media_url,'') AS media_url,coalesce(m.share_url,'') AS share_url FROM outbox o JOIN expression_meta m ON o.id=m.id ORDER BY o.created DESC LIMIT 100"):
             item = dict(r);item["refs"] = json.loads(item["refs"]);item["receipt"] = json.loads(item["receipt"]) if item["receipt"] else None
             result.append(item)
         return result
@@ -90,11 +100,23 @@ class Expressions:
                           (now, now+max(self.cfg.get("expression_review_min_seconds",21600),min(86400,int(delay))) if action == "wait" else now, reason[:800], revision, eid))
         self.s.event("expression_decision", {"id": eid, "action": action, "reason": reason[:800]})
 
+    def _qq_delivery_target(self):
+        d = self.delivery
+        qq_cfg = self.cfg.get("qq", {}) or {}
+        uid = str(d.get("qq_user_id") or d.get("chat_id") or (qq_cfg.get("owner_ids") or [None])[0] or "").strip()
+        owners = {str(x).strip() for x in (qq_cfg.get("owner_ids") or self.cfg.get("bridge_owner_ids") or []) if str(x).strip()}
+        http_url = str(d.get("qq_http_url") or qq_cfg.get("http_url") or qq_cfg.get("onebot_http_url") or "").strip()
+
+        if not uid or uid not in owners or not http_url:
+            return None, None
+        return uid, {**qq_cfg, "http_url": http_url}
+
     def delivery_block(self, *, foreground=False):
         d = self.delivery
         if sleep_until(self.cfg):
             return "睡眠时段，暂停主动活动与消息"
-        if d.get("mode", "draft") != "telegram" or d.get("authorized") is not True:
+        mode = d.get("mode", "draft")
+        if mode not in {"telegram", "qq"} or d.get("authorized") is not True:
             return "草稿模式，未开启外发"
         if foreground or self.s.get("paused") or time.time() < self.s.get("foreground_until", 0):
             return "正在聊天或自主活动已暂停"
@@ -111,8 +133,13 @@ class Expressions:
         today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
         if sum(datetime.fromtimestamp(r["updated"], ZoneInfo("Asia/Shanghai")).date() == today for r in sent) >= d.get("max_per_day", 32):
             return "今日主动消息额度已用完"
-        if str(d.get("chat_id", "")) not in {str(x) for x in self.cfg.get("bridge_owner_ids", [])} or not d.get("token_file"):
-            return "尚未配置已授权的主人渠道"
+        if mode == "qq":
+            uid, _ = self._qq_delivery_target()
+            if not uid:
+                return "尚未配置已授权的主人渠道"
+        else:
+            if str(d.get("chat_id", "")) not in {str(x) for x in self.cfg.get("bridge_owner_ids", [])} or not d.get("token_file"):
+                return "尚未配置已授权的主人渠道"
         return None
 
     def next_ready(self, now=None):
@@ -141,10 +168,18 @@ class Expressions:
         row = self.next_ready()
         if not row:
             return
-        # Resolve credentials before reserving an attempt. Never log token-bearing URLs.
-        token = Path(self.delivery["token_file"]).read_text().strip()
-        if not token:
-            return
+        mode = self.delivery.get("mode", "draft")
+        token = None
+        qq_uid, qq_cfg = None, None
+        if mode == "qq":
+            qq_uid, qq_cfg = self._qq_delivery_target()
+            if not qq_uid:
+                return
+        else:
+            # Resolve credentials before reserving an attempt. Never log token-bearing URLs.
+            token = Path(self.delivery["token_file"]).read_text().strip()
+            if not token:
+                return
         attempt = uuid.uuid4().hex
         with self.s.transaction():
             changed = self.s.db.execute("UPDATE outbox SET status='sending' WHERE id=? AND status='ready'", (row["id"],)).rowcount
@@ -152,16 +187,53 @@ class Expressions:
                 return
             self.s.db.execute("UPDATE expression_meta SET attempt_id=?,updated=? WHERE id=?", (attempt, time.time(), row["id"]))
         try:
-            async with httpx.AsyncClient(timeout=20, trust_env=False) as client:
-                response = await client.post("https://api.telegram.org/bot"+token+"/sendMessage",
-                    json={"chat_id": str(self.delivery["chat_id"]), "text": row["content"]})
-            data = response.json()
-            if response.is_success and data.get("ok") and data.get("result", {}).get("message_id"):
-                status, receipt = "sent", {"message_id": data["result"]["message_id"], "channel": "telegram", "read_status": "unknown"}
-            elif data.get("ok") is False:
-                status, receipt = "failed", {"code": data.get("error_code"), "reason": "渠道明确拒绝投递，不自动重试"}
+            if mode == "qq":
+                import asyncio
+                from .channels import send_onebot_message, send_onebot_typing, synthesize_voice_optional
+                await send_onebot_typing(qq_cfg, user_id=qq_uid)
+                if qq_cfg.get("typing_simulation", True) is not False:
+                    await asyncio.sleep(min(1.2, max(0.35, len(row["content"]) * 0.05)))
+                dyn = self.s.get("dynamics_state") or {}
+                media_url = str(row.get("media_url") or "").strip()
+                share_url = str(row.get("share_url") or "").strip()
+                text_out = row["content"]
+                if share_url and not media_url and share_url not in text_out:
+                    text_out = f"{text_out}\n{share_url}"
+                audio_url = ""
+                if not media_url:
+                    audio_url = await synthesize_voice_optional(self.cfg, text_out, dynamics=dyn, out_dir=self.s.home / "artifacts")
+                extra_media = {}
+                if media_url:
+                    extra_media["image_url"] = media_url
+                if audio_url:
+                    extra_media["audio_url"] = audio_url
+                res = await send_onebot_message(
+                    qq_cfg,
+                    message_type="private",
+                    user_id=qq_uid,
+                    text=text_out,
+                    **extra_media,
+                )
+                if res.get("ok"):
+                    status, receipt = "sent", {
+                        "message_id": res.get("message_id"),
+                        "channel": "qq",
+                        "read_status": "unknown",
+                        "rich_media": bool(res.get("rich_media")),
+                    }
+                else:
+                    status, receipt = "failed", {"code": res.get("code"), "reason": res.get("reason", "QQ 渠道拒绝投递")}
             else:
-                status, receipt = "uncertain", {"reason": "渠道响应无法确认，不自动重试"}
+                async with httpx.AsyncClient(timeout=20, trust_env=False) as client:
+                    response = await client.post("https://api.telegram.org/bot"+token+"/sendMessage",
+                        json={"chat_id": str(self.delivery["chat_id"]), "text": row["content"]})
+                data = response.json()
+                if response.is_success and data.get("ok") and data.get("result", {}).get("message_id"):
+                    status, receipt = "sent", {"message_id": data["result"]["message_id"], "channel": "telegram", "read_status": "unknown"}
+                elif data.get("ok") is False:
+                    status, receipt = "failed", {"code": data.get("error_code"), "reason": "渠道明确拒绝投递，不自动重试"}
+                else:
+                    status, receipt = "uncertain", {"reason": "渠道响应无法确认，不自动重试"}
         except Exception as exc:
             status, receipt = "uncertain", {"reason": "请求结果无法确认，不自动重试", "exception_type": type(exc).__name__}
         with self.s.transaction():

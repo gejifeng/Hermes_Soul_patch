@@ -11,7 +11,7 @@ import uuid
 from .config import parse_object
 from .schedule import sleep_until, next_allowed
 from .mcp import Xiaohongshu, feed_cards
-from .prompts import IDENTITY_CONTRACT, CHOOSE, PICK, REMEMBER, CHAT
+from .prompts import IDENTITY_CONTRACT, CHOOSE, PICK, REMEMBER, CHAT, render
 from .store import Store, encode
 from .life import KINDS, Life
 from .attention import Attention
@@ -20,10 +20,21 @@ from .memory import active, terms
 from .memory import recall
 from .expressions import Expressions
 from .failures import describe
-from .prompts import EXPRESSION_REVIEW, EXPRESSION_STYLE, REACH_OUT
+from .prompts import EXPRESSION_REVIEW, EXPRESSION_STYLE, IM_CHAT_STYLE, REACH_OUT
 from .contact import Contact
+from .dynamics import Dynamics
+from .embedding import EmbeddingError, EmbeddingStore, OpenAIEmbeddingClient, cosine_similarity
+from .channels import (
+    Channels, normalize_scene, sanitize_foreign, looks_like_rewriting,
+    pick_hear_sentence, redact_private_terms, strip_channel_note, strip_leading_header,
+    clean_history_for_im, normalize_im_replies, compute_typing_plan,
+    parse_onebot_event, send_onebot_message, send_onebot_typing, synthesize_voice_optional,
+    check_qq_login, resolve_qq_token, resolve_napcat_webui,
+)
+
+
 from .social import Social, TOOLS as SOCIAL_TOOLS, PUBLIC as SOCIAL_PUBLIC
-from .prompts import render, PUBLIC_PERSONA, SOCIAL_COMMENT, SOCIAL_REPLY, SOCIAL_AUDIT, SOCIAL_AUDITOR
+from .prompts import PUBLIC_PERSONA, SOCIAL_COMMENT, SOCIAL_REPLY, SOCIAL_AUDIT, SOCIAL_AUDITOR, CHAT_CHANNEL
 
 
 class StaleActivity(RuntimeError):
@@ -35,10 +46,14 @@ class Runtime:
         self.cfg = config
         self.store = Store(config["home"])
         self.store.recover()
-        self.life = Life(self.store)
-        self.attention = Attention(self.store, self.life, config)
+        self.embedding_client = OpenAIEmbeddingClient(config)
+        self.embeddings = EmbeddingStore(self.store, self.embedding_client)
+        self.life = Life(self.store, embeddings=self.embeddings)
+        self.attention = Attention(self.store, self.life, config, embeddings=self.embeddings)
         self.expressions = Expressions(self.store, config)
-        self.contact = Contact(self.store, config)
+        self.dynamics = Dynamics(self.store, config)
+        self.contact = Contact(self.store, config, self.dynamics, embeddings=self.embeddings)
+        self.channels = Channels(self.store, config)
         self.social = Social(self.store, config)
         self.mcp = Xiaohongshu(config["mcp_url"], config.get("mcp_token_file"))
         self.model_lock = asyncio.Lock()
@@ -51,8 +66,10 @@ class Runtime:
         self.wake = asyncio.Event()
         self.last_error = None
         self.last_login = None
+        self.last_qq_login = None
         self.active_id = None
         self.mcp_ready = False
+
 
     def system(self):
         parts = [IDENTITY_CONTRACT]
@@ -83,6 +100,9 @@ class Runtime:
             request = {"config": self.cfg, "call_id": cid, "purpose": purpose, "result_path": str(result_path),
                        "system": render(system or self.system(), self.cfg), "prompt": render(instruction, self.cfg) + "\n\n背景数据：\n" + encode(context),
                        "history": history or []}
+            request_path = root / "request.json"
+            payload = encode(request)
+            request_path.write_text(payload)
             # File logging bounds pipe memory, keeps provider diagnostics outside the UI.
             log = (root / "worker.log").open("wb")
             env = dict(os.environ)
@@ -91,11 +111,11 @@ class Runtime:
             env["PYTHONPATH"] = project + os.pathsep + self.cfg["hermes_root"]
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    self.cfg["python"], "-m", "hermes_soul.worker",
+                    self.cfg["python"], str(Path(__file__).with_name("worker.py")), str(request_path),
                     stdin=asyncio.subprocess.PIPE, stdout=log, stderr=log,
                     cwd=str(self.store.home), env=env, start_new_session=True)
                 self.process, self.process_purpose = proc, purpose
-                await asyncio.wait_for(proc.communicate(encode(request).encode()), self.cfg["worker_timeout"])
+                await asyncio.wait_for(proc.communicate(payload.encode()), self.cfg["worker_timeout"])
                 if proc.returncode or not result_path.exists():
                     raise RuntimeError(f"Hermes 执行失败，诊断记录 {cid}/worker.log")
                 output = json.loads(result_path.read_text())
@@ -148,11 +168,12 @@ class Runtime:
         from zoneinfo import ZoneInfo
         focused = [self.life.get_record(rid) for rid in self.store.get("focus_ids", [])]
         focused = [r for r in focused if r and active(r) and not self.attention.blocked(r['id'])][:3]
+        contact_state = self.contact.state(purpose=purpose)
         ctx = {"now":datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(), "revision":self.store.get("revision"),
-               "capabilities":{"available":["xiaohongshu_read"],"weather_verification":"需单独的官方来源，当前尚未接入",
+               "capabilities":{"available":sorted(self.attention.available_capabilities()),"weather_verification":"需单独的官方来源，当前尚未接入",
                                "physical_actions":"角色想象与拟议活动应标注为想象或计划"},
                "current_focus":self.store.get("focus_choice"), "recent_activities":self.attention.activity_summary(),
-               "contact":self.contact.state()}
+               "contact":contact_state, "dynamics":contact_state.get("dynamics")}
         def small(r):
             p=dict(r['payload'])
             if self.attention.blocked(r['id']):
@@ -167,14 +188,15 @@ class Runtime:
             if r['kind'] in {'episode','journal'}:
                 p['epistemic_status']='subjective_historical_expression'
             keys=('content','text','state','epistemic_status','uncertainty','verification','time_sensitive','applicable_period',
-                  'action','scope','review_at','waiting_for','open_question','attraction','expires_at')
+                  'action','scope','review_at','waiting_for','open_question','attraction','expires_at',
+                  'commitment_status','window_start','window_end')
             return {"id":r['id'],"kind":r['kind'],"label":r['label'],
                     "payload":{k:(v[:500] if isinstance(v,str) else v) for k,v in p.items() if k in keys},
                     "refs":r['refs'][-4:]}
         ctx['situations']=[small(r) for r in focused]
         ctx['boundaries']=[small(r) for r in self.life.boundaries()][:4]
         if purpose=='attention':
-            ctx['candidates']=self.attention.candidates(self.reach_out_contact(ctx['contact']))
+            ctx['candidates']=self.attention.candidates(self.reach_out_contact(ctx['contact']), dynamics=ctx.get('dynamics'))
             ctx['available_activities']=['browse','search','rest']
             if any(c['id']=='reach_out' for c in ctx['candidates']): ctx['available_activities'].append('reach_out')
             if self.store.pending_observations(): ctx['available_activities'].append('reflect')
@@ -186,27 +208,40 @@ class Runtime:
             ctx.pop('current_focus',None)
         else:
             query=query or ' '.join(r['label'] for r in focused)
-            recalled=recall(self.store,query,limit=8)
+            recalled=recall(self.store,query,limit=8,embeddings=self.embeddings)
             q=set(terms(query))
             if purpose=='chat' and not any(w in query for w in ('日记','当时','那天','经历','回忆','看过')):
                 recalled=[r for r in recalled if r['kind'] not in {'episode','journal'}]
-            recalled=[r for r in recalled if q.intersection(terms(r['label']+' '+r['payload'].get('content',r['payload'].get('text',''))))]
+            recalled=[r for r in recalled if r.get('recalled_by') in {'embedding','hybrid'} or q.intersection(terms(r['label']+' '+r['payload'].get('content',r['payload'].get('text',''))))]
             ctx['records']=[small(r) for r in recalled[:6]]
-            ctx['parked_topics']=[{"id":r['id'],"label":r['label'],"waiting_for":r['attention']['waiting_for']}
-                                  for r in self.attention.parked() if q.intersection(terms(r['label']))][:3]
+            parked_rows = self.attention.parked()
+            q_vec = self.embedding_client.get_cached(query) if (self.embedding_client.is_configured() and query.strip()) else None
+            parked_vecs = self.embeddings.get_vectors([r['id'] for r in parked_rows]) if (q_vec is not None and parked_rows) else {}
+            ctx['parked_topics']=[
+                {"id":r['id'],"label":r['label'],"waiting_for":r['attention']['waiting_for']}
+                for r in parked_rows
+                if q.intersection(terms(r['label'])) or (q_vec is not None and r['id'] in parked_vecs and cosine_similarity(q_vec, parked_vecs[r['id']]) >= 0.46)
+            ][:3]
         affects=[r for r in self.life.kind_rows('affect') if active(r)]
         scope_query=query+' '+' '.join(r['label'] for r in focused)
-        related=[r for r in affects if r['payload'].get('resolve_on')=='owner_message' or set(terms(r['payload'].get('scope',''))) & set(terms(scope_query))]
+        q_scope_vec = self.embedding_client.get_cached(query) if (self.embedding_client.is_configured() and query.strip()) else None
+        affect_vecs = self.embeddings.get_vectors([r['id'] for r in affects]) if (q_scope_vec is not None and affects) else {}
+        related=[
+            r for r in affects
+            if r['payload'].get('resolve_on')=='owner_message'
+            or set(terms(r['payload'].get('scope',''))) & set(terms(scope_query))
+            or (q_scope_vec is not None and r['id'] in affect_vecs and cosine_similarity(q_scope_vec, affect_vecs[r['id']]) >= 0.46)
+        ]
         if related: ctx['feelings']=[small(r) for r in related[:2]]
         return ctx
 
     async def mcp_observation(self, aid, tool, args):
         start = time.time()
         import hashlib
-        retry_key = "tool_backoff:"+hashlib.sha256(encode([tool,args.get('keyword',args.get('feed_id',''))]).encode()).hexdigest()
+        retry_key = "tool_backoff:"+hashlib.sha256(encode([tool,args.get('keyword',args.get('feed_id',args.get('tab','')))]).encode()).hexdigest()
         if self.store.get(retry_key,{}).get('until',0)>start:
             raise ValueError("该读取正在退避，稍后再试或换一个方向")
-        self.store.step(aid, "tool", "running", tool=tool, feed_id=args.get("feed_id"), query=args.get("keyword"))
+        self.store.step(aid, "tool", "running", tool=tool, feed_id=args.get("feed_id"), query=args.get("keyword") or args.get("tab"))
         try:
             result = await self.mcp.call(tool, args)
             data = self.mcp.data(result)
@@ -218,14 +253,18 @@ class Runtime:
             if not isinstance(exc,asyncio.CancelledError):
                 attempts=self.store.get(retry_key,{}).get('attempts',0)+1
                 self.store.set(retry_key,{'attempts':attempts,'until':time.time()+min(7200,900*2**min(attempts-1,3)), 'code':error['code']})
+                self.dynamics.on_reading_impulse(tool_failed=True)
             self.store.step(aid, "tool", "interrupted" if isinstance(exc, asyncio.CancelledError) else "failed",
                             tool=tool, elapsed=round(time.time()-start, 2), **error)
             self.store.db.execute("UPDATE activity_steps SET status='finished' WHERE activity_id=? AND status='running'", (aid,))
             raise
-        self.store.set(retry_key,{})
+        self.store.delete(retry_key)
+        if tool == "get_feed_detail":
+            self.dynamics.on_reading_impulse(text)
         raw_path = self.store.home / "artifacts" / (uuid.uuid4().hex + ".json")
         raw_path.write_text(encode(result))
-        oid = self.store.observe("xiaohongshu", args.get("feed_id", tool),
+        ext_id = args.get("feed_id") or (f"{tool}:{args['tab']}" if args.get("tab") else tool)
+        oid = self.store.observe("xiaohongshu", ext_id,
               {"tool": tool, "arguments": args, "content": data, "media_understood": False,
                "source_url": "https://www.xiaohongshu.com/explore/" + args["feed_id"] if args.get("feed_id") else "https://www.xiaohongshu.com/",
                "artifact": str(raw_path.relative_to(self.store.home))})
@@ -257,18 +296,31 @@ class Runtime:
             return await self.mcp_observation(aid, tool, args)
         except Exception as exc:
             error = describe(exc)
-            if tool == "search_feeds" and error["code"] in {"timeout", "connection_error", "browser_start_failed"}:
-                self.store.step(aid, "partial", "complete", recovery="搜索不可用，改用首页图文", **error)
+            if tool in {"search_feeds", "get_my_profile"} and error["code"] in {"timeout", "connection_error", "browser_start_failed"}:
+                self.store.step(aid, "partial", "complete", recovery="列表读取不可用，改用首页图文", **error)
                 return await self.mcp_observation(aid, "list_feeds", {})
             raise
 
     async def browse(self, aid, decision, revision):
-        query = str(decision.get("query", ""))[:120]
-        tool, args = ("search_feeds", {"keyword": query}) if query else ("list_feeds", {})
+        query = str(decision.get("query", "")).strip()[:120]
+        source = str(decision.get("source", "")).strip().lower()
+        if source in {"favorites", "fav"}:
+            tool, args = ("get_my_profile", {"tab": "fav"})
+        elif source == "liked":
+            tool, args = ("get_my_profile", {"tab": "liked"})
+        elif query:
+            tool, args = ("search_feeds", {"keyword": query})
+        else:
+            tool, args = ("list_feeds", {})
         oid, data = await self.mcp_listing(aid, tool, args)
         refs = [oid]
         self.store.checkpoint(aid, {"refs": refs})
         cards = self.browse_cards(aid, data)
+        if tool == "get_my_profile" and not cards:
+            self.store.step(aid, "partial", "complete", recovery="收藏夹/点赞列表暂无可读图文帖，改逛首页图文")
+            oid2, data2 = await self.mcp_observation(aid, "list_feeds", {})
+            refs.append(oid2)
+            cards = self.browse_cards(aid, data2)
         seen = []
         detail = None
         failures = 0
@@ -299,6 +351,21 @@ class Runtime:
                         break
                     raise
                 cards, detail = self.browse_cards(aid, data), None
+            elif action in {"favorites", "liked"}:
+                tab = "fav" if action == "favorites" else "liked"
+                try:
+                    oid, data = await self.mcp_observation(aid, "get_my_profile", {"tab": tab})
+                except Exception as exc:
+                    error = describe(exc)
+                    if error["code"] in {"timeout", "connection_error", "browser_start_failed"}:
+                        self.store.step(aid, "partial", "complete", recovery="个人收藏/点赞列表暂不可用，保留已读内容并结束", **error)
+                        break
+                    raise
+                new_cards = self.browse_cards(aid, data)
+                if new_cards:
+                    cards, detail = new_cards, None
+                else:
+                    self.store.step(aid, "partial", "complete", recovery="收藏夹/点赞列表暂无可读图文帖，继续看当前列表")
             elif action == "read":
                 card = next((c for c in cards if c["id"] == choice.get("feed_id")), None)
                 if not card or not card["xsec_token"]:
@@ -342,11 +409,11 @@ class Runtime:
                 raise ValueError("不能借用本次背景之外的观察")
         validate_refs(refs)
         # A non-object entry or an unknown `kind` can never be persisted and makes
-        # no evidence claim, so drop those before validating the batch. Everything
-        # that remains is validated atomically: if any one fails (bad refs, domain
-        # rule, ...) nothing is written and the error propagates, preserving the
-        # all-or-nothing guarantee asserted by
-        # test_user_correction_fences_old_updates_atomically.
+        # no evidence claim, so drop those before validating the batch. Provenance
+        # (`refs`) is enforced atomically across the whole batch so fabricated or
+        # out-of-scope evidence rejects everything (`test_user_correction_fences_old_updates_atomically`),
+        # while stale `id` hints are repaired to label-matching and per-item quote/domain
+        # mismatches are skipped individually without aborting valid updates or journals.
         usable = []
         for u in updates:
             if not isinstance(u, dict) or u.get("kind") not in KINDS:
@@ -358,22 +425,81 @@ class Runtime:
         if len(usable) > 3:
             self.store.step(aid, "update", "trimmed", reason="模型返回超过3条更新，保留前3条")
             usable = usable[:3]
-        prepared = [self.life.prepare(u, set(allowed_refs), aid) for u in usable]
+        for u in usable:
+            validate_refs(u.get("refs"))
+        prepared = []
+        for u in usable:
+            item_u = dict(u)
+            if item_u.get("id"):
+                prior = self.life.get_record(item_u["id"])
+                if not prior or prior["kind"] != item_u["kind"]:
+                    self.store.step(aid, "update", "repaired", kind=item_u["kind"],
+                                    reason="记录ID不存在或类型不符，改为按主题匹配或新建")
+                    item_u["id"] = ""
+            try:
+                prepared.append(self.life.prepare(item_u, set(allowed_refs), aid))
+            except ValueError as exc:
+                self.store.step(aid, "update", "skipped", kind=item_u["kind"],
+                                reason=str(exc)[:200])
+        saved_ids = []
         with self.store.transaction():
             if result.get("impression"):
                 self.store.record("episode", "活动印象", {"text": str(result["impression"])[:1600], "activity_id": aid, "epistemic_status":"subjective_impression"}, refs)
             for item in prepared:
                 rid = self.life.save(item)
+                saved_ids.append(rid)
                 self.attention.sync(rid)
             if result.get("journal"):
-                self.store.record("journal", "私人日记", {"text": str(result["journal"])[:4000], "activity_id": aid, "epistemic_status":"subjective_journal"}, refs)
+                jid = self.store.record("journal", "私人日记", {"text": str(result["journal"])[:4000], "activity_id": aid, "epistemic_status":"subjective_journal"}, refs)
+                saved_ids.append(jid)
             if result.get("expression"):
-                self.expressions.create(str(result["expression"]), refs, revision)
+                expr_raw = str(result["expression"]).strip()
+                expr_bubbles = normalize_im_replies(expr_raw, max_bubbles=2)
+                expr_text = "\n".join(expr_bubbles) if expr_bubbles else expr_raw
+                media_url, share_url = self._resolve_share_media(expr_text, result.get("share_feed_id"), allowed_refs)
+                self.expressions.create(expr_text, refs, revision, media_url=media_url, share_url=share_url)
             self.store.event("reflection", {"activity_id": aid, "result": result})
             consumed = list(dict.fromkeys(self.store.get("reflected_observations", []) + list(allowed_refs)))[-512:]
             self.store.set("reflected_observations", consumed)
             self.store.db.executemany("UPDATE observation_queue SET status='digested' WHERE observation_id=?", [(r,) for r in allowed_refs])
+        if saved_ids and self.embedding_client.is_configured():
+            with contextlib.suppress(EmbeddingError, Exception):
+                self.embeddings.index_record_ids(saved_ids)
         self.export_journals()
+
+    def _resolve_share_media(self, expr_text, share_feed_id, allowed_refs):
+        """Attach real Xiaohongshu cover/image URL and post link when she shares a post she actually read."""
+        want_fid = str(share_feed_id or "").strip()
+        detail_obs = []
+        for oid in allowed_refs or []:
+            row = self.store.db.execute("SELECT source, external_id, payload FROM observations WHERE id=?", (oid,)).fetchone()
+            if not row or row["source"] != "xiaohongshu":
+                continue
+            p = json.loads(row["payload"]) if isinstance(row["payload"], str) else row["payload"]
+            if p.get("tool") == "get_feed_detail":
+                comp = compact_content("get_feed_detail", p.get("content", {}))
+                img = str(comp.get("image_url") or "").strip()
+                s_url = str(p.get("source_url") or "").strip()
+                detail_obs.append({
+                    "feed_id": str(row["external_id"] or comp.get("post_id") or ""),
+                    "title": str(comp.get("title") or ""),
+                    "body": str(comp.get("body") or "")[:500],
+                    "image_url": img,
+                    "share_url": s_url,
+                })
+        if not detail_obs:
+            return "", ""
+        if want_fid:
+            hit = next((d for d in detail_obs if d["feed_id"] == want_fid), None)
+            if hit:
+                return hit["image_url"], hit["share_url"]
+        if len(detail_obs) == 1:
+            return detail_obs[0]["image_url"], detail_obs[0]["share_url"]
+        q = set(terms(expr_text))
+        best = max(detail_obs, key=lambda d: len(q & set(terms(d["title"] + " " + d["body"]))))
+        if len(q & set(terms(best["title"] + " " + best["body"]))) >= 1:
+            return best["image_url"], best["share_url"]
+        return "", ""
 
     def export_journals(self):
         # DB is authoritative; regenerate after restart if a crash split DB/file commits.
@@ -427,14 +553,23 @@ class Runtime:
             self.expressions.decide(row["id"], decision.get("action"), str(decision.get("reason", "")), revision, decision.get("delay_seconds", 1800))
 
     def reach_out_contact(self, contact):
-        """Offer reaching out only when no earlier burst is still queued or just went out."""
-        if not contact.get('gap_level') or not self.contact.gap_observations():
+        """Offer reaching out only when no earlier burst is still queued or just went out, and ODE or due-commitment allows it."""
+        dyn = contact.get('dynamics') or self.dynamics.snapshot()
+        has_gap = bool(contact.get('gap_level') and self.contact.gap_observations() and dyn.get('allow_reach_out', True))
+        has_promise = bool(
+            self.contact.promise_observations()
+            and dyn.get('phase') not in {'cold', 'detached'}
+            and (not self.contact.last_user_at() or time.time() - self.contact.last_user_at() >= 1800)
+        )
+        if not has_gap and not has_promise:
             return None
         last = self.store.db.execute("""SELECT max(m.updated) FROM expression_meta m JOIN outbox o ON o.id=m.id
             WHERE m.origin='reach_out' AND o.status IN ('ready','sending','sent','uncertain')""").fetchone()[0]
         pending = self.store.db.execute("""SELECT 1 FROM expression_meta m JOIN outbox o ON o.id=m.id
             WHERE m.origin='reach_out' AND o.status='ready'""").fetchone()
-        if pending or (last and time.time()-last < self.cfg.get('delivery', {}).get('min_interval_seconds', 3600)):
+        base_interval = self.cfg.get('delivery', {}).get('min_interval_seconds', 3600)
+        min_interval = self.dynamics.min_outreach_interval(base_interval)
+        if pending or (last and time.time()-last < min_interval):
             return None
         return contact
 
@@ -444,7 +579,7 @@ class Runtime:
             raise ValueError("没有宿主记录的联系间隔，不能凭空说很久没联系")
         # The model may name reach_out even when it was not offered; a queued burst must go out first.
         if not self.reach_out_contact(self.contact.state()):
-            self.store.step(aid, "reach_out", "skipped", message="上一组主动消息还在等待发送或刚发出")
+            self.store.step(aid, "reach_out", "skipped", message="上一组主动消息还在等待发送、刚发出或当前处于心冷不应期")
             return []
         result = parse_object(await self.model("reach_out", REACH_OUT, {"life": self.background_context("", "expression"),
             "recent_expressions": [{"content": r["content"], "status": r["status"], "origin": r["origin"]} for r in self.expressions.rows()[:8]]}))
@@ -452,8 +587,11 @@ class Runtime:
         messages = result.get("messages")
         if not isinstance(messages, list):
             raise ValueError("主动联系需要消息列表")
-        messages = [m.strip()[:500] for m in messages if isinstance(m, str) and m.strip()][:self.cfg.get("delivery", {}).get("max_per_block", 4)]
+        raw_messages = [m.strip()[:500] for m in messages if isinstance(m, str) and m.strip()]
+        max_per_block = self.cfg.get("delivery", {}).get("max_per_block", 3)
+        messages = normalize_im_replies("", raw_messages, max_bubbles=min(4, max_per_block))
         if not messages:
+            self.dynamics.on_reach_out(0)
             self.store.step(aid, "reach_out", "complete", message="想了想，这次先不发")
             return []
         block = uuid.uuid4().hex
@@ -465,6 +603,7 @@ class Runtime:
             # "在干嘛呀" is only true for a short while.
             self.store.db.executemany("UPDATE expression_meta SET expires=? WHERE id=?",
                                       [(time.time() + self.cfg.get("delivery", {}).get("reach_out_ttl_seconds", 7200), eid) for eid in ids])
+            self.dynamics.on_reach_out(len(ids))
         self.store.step(aid, "reach_out", "complete", block_id=block, messages=len(ids), reason=reason)
         return ids
 
@@ -623,6 +762,9 @@ class Runtime:
             return
         self.attention.maintenance()
         self.contact.maintenance()
+        if self.embedding_client.is_configured():
+            with contextlib.suppress(EmbeddingError, Exception):
+                await self.embeddings.abackfill_records(limit=32)
         reason=self.attention.due_reason(self.expressions)
         if not reason:
             self.attention.check('skipped','背景无变化，保留下一次自主重新考虑时间')
@@ -631,6 +773,7 @@ class Runtime:
         self.attention.check('decision',reason)
         async with self.activity_lock:
             kind = "rest"
+            completed_ok = False
             revision = self.store.get("revision")
             aid = self.store.start_activity("wakeup", "自主检查：允许闲逛或休息，不要求产出")
             self.active_id = aid
@@ -685,10 +828,13 @@ class Runtime:
                 elif kind == "reach_out":
                     await self.reach_out(aid, revision)
                 else:
+                    if capable:
+                        self.dynamics.on_rest()
                     self.store.step(aid, "rest", "complete", message="暂不开展活动，不表示睡眠或刚醒")
                     delay = max(self.cfg["interval_seconds"], min(int(choice.get("rest_seconds", delay)), self.cfg["idle_max_seconds"]))
                 partial = any(s["stage"] == "partial" for s in self.store.steps(aid))
                 self.store.finish_activity(aid, "partial" if partial else "ended", {"refs": refs, "choice": choice})
+                completed_ok = True
                 self.last_error = None
             except StaleActivity as exc:
                 self.store.finish_activity(aid, "deferred", {"reason": str(exc)})
@@ -705,36 +851,178 @@ class Runtime:
             finally:
                 self.store.db.execute("UPDATE activity_steps SET status='finished' WHERE activity_id=? AND status='running'", (aid,))
                 self.active_id = None
-                self.attention.finish(kind)
+                if completed_ok:
+                    self.attention.finish(kind)
                 self.store.set("next_wake", next_allowed(self.cfg, time.time() + delay))
 
     async def chat(self, message):
+        res = await self.say(message, scene="desk", owner=True, guest=False)
+        return res["reply"]
+
+    async def say(self, message, *, channel="", scene="desk", room="", speaker="", owner=None, guest=False, title="", observe_only=False):
+        """dsh-fish compatible multi-room entry point (`POST /api/say` / `/dsh-fish/say`).
+
+        Enforces the three core dsh-fish boundaries:
+          1. Private owner chat (`scene in {'desk','private'}` and not `guest`) merges into
+             the main study room (`room_id='house'`) and counts as owner contact (`at_home=True`).
+          2. Group chat (`scene='group'`) and guest messages (`guest=True`) route to isolated
+             channel rooms (`channels.resolve`), NEVER update `last_user_at`, and NEVER reset
+             the ODE neglect/phase-transition state machine.
+          3. Owner messages inside a group (`scene='group', owner=True`) record a `heard`
+             observation (`scene='group'`) into memory without touching vital signs.
+        """
+        norm_scene = normalize_scene(scene)
+        is_group = norm_scene == "group"
+        is_guest = bool(guest)
+        # In group chats, owner must be explicitly declared (`owner=True`), never guessed by nickname.
+        is_owner = (not is_guest) and (owner is True if is_group else (owner is not False))
+        foreign = (not is_owner) and (is_group or is_guest)
+        at_home = (not is_group) and (not is_guest) and is_owner
+
+        body = str(message or "").strip()
+        if foreign and body:
+            cleaned = sanitize_foreign(body)
+            if cleaned["dropped"] and not cleaned["text"].strip():
+                return {"ok": False, "note": "这条里能读的部分没剩下什么，跳过。", "said": [], "reply": "", "herReply": ""}
+            body = cleaned["text"].strip()
+        else:
+            body = strip_channel_note(strip_leading_header(body))
+
+        if not body:
+            return {"ok": False, "note": "你什么都没说。", "said": [], "reply": "", "herReply": ""}
+        if len(body) > 12000:
+            return {"ok": False, "note": "太长了，分几次说。", "said": [], "reply": "", "herReply": ""}
+        if looks_like_rewriting(body):
+            return {"ok": False, "note": "这句我没递给她。", "said": [], "reply": "", "herReply": ""}
+
+        route = self.channels.resolve(channel=channel, scene=norm_scene, room=room, title=title)
+        room_id = route["room_id"]
+        spk = re.sub(r"[\r\n]+", " ", str(speaker or "")).strip()[:40] if foreign else ""
+
+        if at_home and body.strip().lower() in {"/new", "/reset"}:
+            self.store.set("chat_boundary", time.time())
+            self.store.set("pending_chat_refs", [])
+            self.store.bump()
+            ack = "好，翻篇重新聊。"
+            return {
+                "ok": True,
+                "reply": ack,
+                "herReply": ack,
+                "said": [ack],
+                "channel": route["key"],
+                "scene": norm_scene,
+                "room": route["room"],
+                "room_id": room_id,
+                "at_home": True,
+                "reset": True,
+            }
+
+        # Owner speaking in a group: record his words into memory (`scene='group'`), but do NOT touch vital signs!
+        oid = None
+        if is_group and is_owner:
+            sentence = pick_hear_sentence(body) or body[:160]
+            oid = self.store.observe("user", f"group_heard:{uuid.uuid4().hex}", {
+                "text": render(f"<<OWNER>>在群里说：{sentence}", self.cfg), "scope": "owner_group_heard", "scene": "group", "channel": route["key"]
+            })
+            self.store.queue_observation(oid)
+            self.store.event("owner_group_heard", {"observation_id": oid, "channel": route["key"], "text": sentence})
+            if observe_only:
+                self.store.add_chat("user", f"他在群里说：\n{body}", "complete", room_id=room_id, scene="group", channel=route["key"], speaker="owner")
+                return {"ok": True, "note": "已记下他在群里说的话", "said": [], "reply": "", "herReply": "", "room_id": room_id, "scene": "group", "at_home": False}
+
+        if observe_only:
+            return {"ok": True, "note": "仅旁听", "said": [], "reply": "", "herReply": "", "room_id": room_id, "scene": norm_scene, "at_home": False}
+
         self.chat_waiting += 1
         revision = self.store.bump()
-        oid = self.store.observe("user", uuid.uuid4().hex, {"text": message, "scope": "owner_chat"})
-        self.store.queue_observation(oid)
-        self.attention.on_observation(oid)
-        self.contact.on_owner_message()
-        self.store.set("last_user_at", time.time())
-        cid = self.store.add_chat("user", message, "pending")
-        self.store.set("pending_chat_refs", (self.store.get("pending_chat_refs", []) + [oid])[-12:])
-        self.expressions.invalidate()
+        if at_home:
+            oid = self.store.observe("user", uuid.uuid4().hex, {"text": body, "scope": "owner_chat", "channel": route["key"] or "desk"})
+            self.store.queue_observation(oid)
+            self.attention.on_observation(oid)
+            self.contact.on_owner_message(body)
+            self.store.set("last_user_at", time.time())
+            self.store.set("pending_chat_refs", (self.store.get("pending_chat_refs", []) + [oid])[-12:])
+            self.expressions.invalidate()
+
+        formatted_user = (
+            f"{spk or ('群里有人' if is_group else '外面的人')}{'在群里说' if is_group else '说'}：\n{body}"
+            if foreign else (f"他在群里说：\n{body}" if is_group else body)
+        )
+        cid = self.store.add_chat("user", formatted_user, "pending", room_id=room_id, scene=norm_scene, channel=route["key"], speaker=spk)
         try:
             if self.process_purpose and self.process_purpose != "chat":
                 await self.stop_worker()
             async with self.chat_lock:
-                # Bounded actual chat history, independent of background execution sessions.
-                history = [{"role": c["role"], "content": c["content"]} for c in reversed(self.store.rows("chats", 16))
-                           if c["id"] != cid and c["status"] == "complete" and c["created"] >= self.store.get("chat_boundary", 0)]
-                text = await self.model("chat", CHAT,
-                    {"current_user_message": message, "observation_id": oid, "life": self.background_context(message)}, history=history, foreground=True)
-                text, boundary_id = self.apply_chat_result(text, oid)
+                rows = [
+                    c for c in reversed(self.store.rows("chats", 40))
+                    if c["id"] != cid and c["status"] == "complete"
+                    and (c.get("room_id") or "house") == room_id
+                    and (room_id != "house" or c["created"] >= self.store.get("chat_boundary", 0))
+                ][-16:]
+                history = [
+                    {
+                        "role": c["role"],
+                        "content": clean_history_for_im(c["content"]) if c["role"] == "assistant" else c["content"],
+                    }
+                    for c in rows
+                ]
+                history = [h for h in history if h["content"]]
+                if at_home:
+                    raw = await self.model(
+                        "chat", CHAT,
+                        {"current_user_message": body, "observation_id": oid, "life": self.background_context(body)},
+                        history=history, foreground=True,
+                    )
+                    text, boundary_id = self.apply_chat_result(raw, oid, user_text=body)
+                    if boundary_id:
+                        self.life.note_boundary_response(boundary_id, text)
+                    bubbles = [b.strip() for b in text.split("\n") if b.strip()]
+                else:
+                    life_ctx = self.background_context(body, purpose="channel")
+                    if foreign:
+                        life_ctx.pop("contact", None)
+                    raw = await self.model(
+                        "chat", CHAT_CHANNEL,
+                        {
+                            "scene": norm_scene,
+                            "channel": route["key"],
+                            "room_title": route["title"],
+                            "is_owner": is_owner,
+                            "foreign": foreign,
+                            "guest": is_guest,
+                            "speaker": spk or ("owner" if is_owner else "guest"),
+                            "current_message": formatted_user,
+                            "life": life_ctx,
+                        },
+                        history=history, foreground=True,
+                    )
+                    parsed = parse_object(raw)
+                    bubbles = normalize_im_replies(
+                        parsed.get("reply") if isinstance(parsed.get("reply"), str) else "",
+                        parsed.get("replies") if isinstance(parsed.get("replies"), list) else None,
+                        user_text=body,
+                        max_bubbles=2,
+                    )
+                    bubbles = [redact_private_terms(b[:2000], self.cfg) for b in bubbles if b.strip()]
+                    text = "\n".join(bubbles)[:4000]
                 self.store.db.execute("UPDATE chats SET status='complete' WHERE id=?", (cid,))
-                self.store.add_chat("assistant", text)
-                if boundary_id:
-                    self.life.note_boundary_response(boundary_id, text)
-                self.store.event("chat_response", {"user_observation": oid, "text": text, "revision": revision})
-                return text
+                if text:
+                    self.store.add_chat("assistant", text, "complete", room_id=room_id, scene=norm_scene, channel=route["key"])
+                self.store.event("chat_response", {
+                    "user_observation": oid, "text": text, "revision": revision,
+                    "channel": route["key"], "scene": norm_scene, "room_id": room_id, "at_home": at_home,
+                })
+                return {
+                    "ok": True,
+                    "reply": text,
+                    "herReply": text,
+                    "said": bubbles if bubbles else ([text] if text else []),
+                    "channel": route["key"],
+                    "scene": norm_scene,
+                    "room": route["room"],
+                    "room_id": room_id,
+                    "at_home": at_home,
+                }
         except Exception:
             self.store.db.execute("UPDATE chats SET status='failed' WHERE id=?", (cid,))
             raise
@@ -742,11 +1030,160 @@ class Runtime:
             self.chat_waiting -= 1
             self.store.set("next_wake", time.time() + self.cfg["interval_seconds"])
 
-    def apply_chat_result(self, raw, oid):
+    async def handle_qq_event(self, payload, *, via_ws=None):
+        """Handle an incoming OneBot v11 (NapCat / LLOneBot) webhook or WebSocket event."""
+        parsed = parse_onebot_event(payload, self.cfg)
+        if not parsed:
+            return {"ok": True, "ignored": True}
+        target = parsed.pop("reply_target", None)
+        text = parsed.pop("text", "")
+        pre_locked = bool(self.dynamics.raw_state().get("hysteresis_locked", False))
+        qq_cfg = self.cfg.get("qq", {}) or {}
+        napcat_info = resolve_napcat_webui(self.cfg)
+        http_url = qq_cfg.get("http_url") or qq_cfg.get("onebot_http_url") or f"http://127.0.0.1:{napcat_info['http_port']}"
+        eff_qq_cfg = {**qq_cfg, "http_url": http_url} if http_url else dict(qq_cfg)
+
+        # Show immediate typing indicator on private chat while thinking if live OneBot HTTP is reachable
+        if target and target.get("message_type") == "private" and not parsed.get("observe_only") and http_url:
+            await send_onebot_typing(eff_qq_cfg, user_id=target.get("user_id"))
+
+        result = await self.say(text, **parsed)
+
+        reply = result.get("reply", "")
+        bubbles = [b for b in (result.get("said") or []) if isinstance(b, str) and b.strip()]
+        if not bubbles and reply:
+            bubbles = [reply]
+        dyn_now = self.dynamics.raw_state()
+        typing_plans = compute_typing_plan(bubbles, dynamics=dyn_now, pre_locked=pre_locked) if bubbles else []
+        if typing_plans:
+            result["typing_plan"] = typing_plans
+        delivered = False
+        if bubbles and target and (via_ws is not None or qq_cfg.get("send_via_http", True)) and http_url:
+            deliveries = []
+            all_ok = True
+            is_priv = target.get("message_type", "private") == "private"
+            for idx, bubble in enumerate(bubbles):
+                if is_priv and idx < len(typing_plans):
+                    for step in typing_plans[idx]:
+                        if step["action"] == "typing":
+                            t_res = await send_onebot_typing(eff_qq_cfg, user_id=target.get("user_id"))
+                            if t_res.get("ok"):
+                                await asyncio.sleep(step["seconds"])
+                        elif step["action"] == "pause":
+                            if eff_qq_cfg.get("typing_simulation", True) is not False and deliveries:
+                                await asyncio.sleep(step["seconds"])
+                elif idx > 0:
+                    await asyncio.sleep(min(0.9, max(0.3, len(bubble) * 0.03)))
+                audio_url = ""
+                if is_priv and parsed.get("owner") and idx == len(bubbles) - 1:
+                    audio_url = await synthesize_voice_optional(self.cfg, bubble, dynamics=dyn_now, out_dir=self.store.home / "artifacts")
+                extra_media = {"audio_url": audio_url} if audio_url else {}
+                d = await send_onebot_message(
+                    eff_qq_cfg,
+                    message_type=target.get("message_type", "private"),
+                    user_id=target.get("user_id"),
+                    group_id=target.get("group_id"),
+                    text=bubble,
+                    **extra_media,
+                )
+                deliveries.append(d)
+                if not d.get("ok"):
+                    all_ok = False
+            result["qq_delivery"] = deliveries[-1] if len(deliveries) == 1 else {"ok": all_ok, "deliveries": deliveries}
+            delivered = all_ok
+
+        if bubbles and target and via_ws is not None and not delivered:
+            mtype = target.get("message_type", "private")
+            action = "send_group_msg" if mtype == "group" else "send_private_msg"
+            with contextlib.suppress(Exception):
+                for idx, bubble in enumerate(bubbles):
+                    if idx > 0:
+                        await asyncio.sleep(min(0.9, max(0.3, len(bubble) * 0.03)))
+                    params = (
+                        {"group_id": int(target["group_id"]) if str(target.get("group_id", "")).isdigit() else target.get("group_id"), "message": bubble}
+                        if mtype == "group" else
+                        {"user_id": int(target["user_id"]) if str(target.get("user_id", "")).isdigit() else target.get("user_id"), "message": bubble}
+                    )
+                    await via_ws.send(json.dumps({"action": action, "params": params}, ensure_ascii=False))
+                result["qq_delivery"] = {"ok": True, "channel": "qq_ws", "count": len(bubbles)}
+        if reply:
+            # Also include OneBot v11 quick-operation field (`reply`) so reverse-HTTP webhooks auto-reply.
+            result["auto_escape"] = False
+        return result
+
+    async def qq_login_status(self, *, fetch_qr: bool = False):
+        """Check QQ login status or generate a QR code via NapCat WebUI."""
+        res = await check_qq_login(self.cfg, fetch_qr=fetch_qr)
+        self.last_qq_login = {k: v for k, v in res.items() if k not in ("svg", "image_data_url", "content")}
+        return res
+
+    async def qq_ws_loop(self):
+        """Background OneBot v11 forward-WebSocket client for receiving QQ messages from local NapCat."""
+        try:
+            import websockets
+        except ImportError:
+            return
+        while not self.stopping:
+            qq_cfg = self.cfg.get("qq", {}) or {}
+            if not qq_cfg.get("enabled", True):
+                await asyncio.sleep(5)
+                continue
+            napcat_info = resolve_napcat_webui(self.cfg)
+            ws_url = str(qq_cfg.get("ws_url") or f"ws://127.0.0.1:{napcat_info['ws_port']}").strip()
+
+            if not ws_url:
+                await asyncio.sleep(5)
+                continue
+            headers = {}
+            tok = resolve_qq_token(qq_cfg)
+            if tok:
+                headers["Authorization"] = f"Bearer {tok}"
+            try:
+                async with websockets.connect(ws_url, additional_headers=headers, ping_interval=20, ping_timeout=20) as ws:
+                    async for raw_msg in ws:
+                        if self.stopping:
+                            break
+                        with contextlib.suppress(Exception):
+                            event = json.loads(raw_msg)
+                            if isinstance(event, dict) and event.get("post_type") == "message":
+                                asyncio.create_task(self.handle_qq_event(event, via_ws=ws))
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                await asyncio.sleep(6)
+
+
+    def whoami(self):
+        """dsh-fish compatible `/whoami` endpoint for external IM bridges."""
+        return {
+            "ok": True,
+            "name": render("<<NAME>>", self.cfg),
+            "role": "companion",
+            "plugin": "hermes-soul",
+            "version": "0.7.0",
+            "root": str(self.store.home),
+            "home": True,
+            "sessionId": "house",
+            "writable": True,
+            "channels": self.channels.list_channels(),
+        }
+
+
+    def apply_chat_result(self, raw, oid, *, user_text=""):
         result = parse_object(raw)
-        reply = result.get("reply")
-        if not isinstance(reply, str) or not reply.strip():
+        raw_reply = result.get("reply")
+        raw_replies = result.get("replies")
+        sleepy = self.dynamics.raw_state().get("energy_band") == "drowsy_sleepy"
+        bubbles = normalize_im_replies(
+            raw_reply if isinstance(raw_reply, str) else "",
+            raw_replies if isinstance(raw_replies, list) else None,
+            user_text=user_text,
+            max_bubbles=3,
+            sleepy=sleepy,
+        )
+        if not bubbles:
             raise ValueError("聊天结果缺少有效回应")
+        reply = "\n".join(bubbles)
         decision = result.get("boundary")
         bid = None
         paused = [r for r in self.life.boundaries() if r["payload"].get("action") == "pause" and
@@ -760,73 +1197,119 @@ class Runtime:
             if decision.get("action") == "pause" and prepared[2]["action"] != "pause":
                 reply = "我想先把这件事说清楚：" + prepared[2]["content"][:500]
             bid = self.life.save(prepared)
+            self.dynamics.on_boundary_event(prepared[2].get("action"))
         if paused and not (decision and decision.get("id") == paused[0]["id"] and decision.get("action") in {"repair", "clarify"}):
             reply = "这段交流我想先暂停一下。" + paused[0]["payload"]["content"][:400] + " 我们可以之后再聊，也可以先澄清这件事。"
         return reply[:12000], bid
 
+    async def embedding_backfill_loop(self):
+        """Gently backfill unindexed working records in small async batches without blocking foreground chat."""
+        await asyncio.sleep(1.0)
+        while not self.stopping:
+            if not self.embedding_client.is_configured():
+                await asyncio.sleep(60.0)
+                continue
+            if self.chat_waiting or self.bridge_busy():
+                await asyncio.sleep(5.0)
+                continue
+            count = 0
+            with contextlib.suppress(EmbeddingError, Exception):
+                count = await self.embeddings.abackfill_records(limit=24)
+            await asyncio.sleep(1.0 if count > 0 else 300.0)
+
     async def loop(self):
         self.export_journals()
-        while not self.stopping:
-            self.life.maintenance()
-            self.attention.maintenance()
-            self.expressions.maintenance()
-            self.contact.maintenance()
-            until = sleep_until(self.cfg)
-            if until and self.store.get("next_wake", 0) < until:
-                self.store.set("next_wake", until)
-            try:
-                await self.expressions.deliver_one(foreground=bool(self.chat_waiting or self.process))
-            except Exception as exc:
-                self.last_error = "消息渠道未就绪："+type(exc).__name__
-            if not self.chat_waiting and not self.bridge_busy():
+        ws_task = asyncio.create_task(self.qq_ws_loop())
+        emb_task = asyncio.create_task(self.embedding_backfill_loop())
+        try:
+            while not self.stopping:
+                self.life.maintenance()
+                self.attention.maintenance()
+                self.expressions.maintenance()
+                self.contact.maintenance()
+                until = sleep_until(self.cfg)
+                if until and self.store.get("next_wake", 0) < until:
+                    self.store.set("next_wake", until)
                 try:
-                    await self.social_step()
-                except StaleActivity:
-                    pass
+                    await self.expressions.deliver_one(foreground=bool(self.chat_waiting or self.process))
                 except Exception as exc:
-                    self.last_error = "小红书互动异常："+describe(exc)["message"][:200]
-            if not until and not self.store.get("paused") and time.time() >= self.store.get("next_wake", 0):
-                await self.tick()
-            self.wake.clear()
-            try:
-                await asyncio.wait_for(self.wake.wait(), 5)
-            except asyncio.TimeoutError:
-                pass
+                    self.last_error = "消息渠道未就绪："+type(exc).__name__
+                if not self.chat_waiting and not self.bridge_busy():
+                    try:
+                        await self.social_step()
+                    except StaleActivity:
+                        pass
+                    except Exception as exc:
+                        self.last_error = "小红书互动异常："+describe(exc)["message"][:200]
+                if not until and not self.store.get("paused") and time.time() >= self.store.get("next_wake", 0):
+                    await self.tick()
+                self.wake.clear()
+                try:
+                    await asyncio.wait_for(self.wake.wait(), 5)
+                except asyncio.TimeoutError:
+                    pass
+        finally:
+            ws_task.cancel()
+            emb_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await ws_task
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await emb_task
 
     def status(self):
         return {"budget": {**self.store.budget_usage(), "limit": self.cfg.get("max_calls_per_day", 500)}, "paused": self.store.get("paused"), "active_id": self.active_id,
                 "sleeping": bool(sleep_until(self.cfg)), "sleep_schedule": self.cfg.get("sleep_schedule", {"enabled": False}),
                 "next_wake": next_allowed(self.cfg, max(time.time(), self.store.get("next_wake", 0) or 0)), "revision": self.store.get("revision"),
-                "login": self.last_login, "error": self.last_error, "model_busy": self.process_purpose,
+                "login": self.last_login, "qq_login": self.last_qq_login, "error": self.last_error, "model_busy": self.process_purpose,
                 "proactive_delivery": self.cfg.get("delivery", {}).get("mode", "draft"), "delivery_block": self.expressions.delivery_block(foreground=bool(self.chat_waiting)),
-                "version": "0.5.0", "persona_name": render("<<NAME>>", self.cfg), "contact": self.contact.state(), "social": self.social_status(), "next_decision":next_allowed(self.cfg,max(time.time(),self.store.get("next_decision",0))), "interval_seconds": self.cfg["interval_seconds"], "schema_version": self.store.get("schema_version"), "mcp_url": self.cfg["mcp_url"]}
+                "version": "0.7.0", "persona_name": render("<<NAME>>", self.cfg), "contact": self.contact.state(), "channels": self.channels.list_channels(), "social": self.social_status(), "embedding": self.embeddings.status(), "next_decision":next_allowed(self.cfg,max(time.time(),self.store.get("next_decision",0))), "interval_seconds": self.cfg["interval_seconds"], "schema_version": self.store.get("schema_version"), "mcp_url": self.cfg["mcp_url"]}
+
+
+    def _allowed_bridge_owners(self, platform):
+        owners = {str(x) for x in (self.cfg.get("bridge_owner_ids") or [])}
+        if platform in {"qq", "qqbot"}:
+            owners |= {str(x) for x in (self.cfg.get("qq", {}).get("owner_ids") or [])}
+        return owners
 
     async def bridge_turn(self, payload):
-        """Called only after Hermes admits an authenticated owner's turn."""
+        """Called only after Hermes admits an authenticated turn (Telegram or QQ/QQBot)."""
         sender = str(payload.get("sender_id", ""))
-        platform = payload.get("platform", "")
-        if platform != "telegram" or sender not in self.cfg.get("bridge_owner_ids", []):
-            raise ValueError("该平台/用户未配置为主人")
+        platform = str(payload.get("platform", "")).lower()
+        scene = normalize_scene(payload.get("scene", "private"))
+        is_group = scene == "group"
+        allowed_owners = self._allowed_bridge_owners(platform)
+        is_owner = sender in allowed_owners and payload.get("guest") is not True
+        if platform not in {"telegram", "qq", "qqbot"} or (not is_owner and not is_group):
+            raise ValueError(render("该平台/用户未配置为<<NAME>>的主人", self.cfg))
         turn_id = str(payload.get("turn_id", ""))
         if not turn_id or len(turn_id) > 200:
             raise ValueError("缺少有效轮次标识")
         key = "bridge:" + turn_id
         previous = self.store.get(key)
+        channel = str(payload.get("channel") or (f"{platform}:group" if is_group else f"{platform}:{sender}"))
+        route = self.channels.resolve(channel=channel, scene=scene, room=payload.get("room", ""))
+        room_id = route["room_id"]
         if payload.get("phase") == "start":
             if previous:
                 return {"context": self.bridge_context(str(payload.get("user_message", "")))}
             self.store.bump()
-            message = str(payload.get("user_message", ""))[:12000]
-            oid = self.store.observe("user", turn_id, {"text": message, "scope": "owner_telegram"})
-            self.store.queue_observation(oid)
-            self.attention.on_observation(oid)
-            self.contact.on_owner_message()
-            self.store.set("last_user_at", time.time())
-            cid = self.store.add_chat("user", message, "pending")
-            self.store.set(key, {"cid": cid, "oid": oid, "done": False})
-            self.store.set("pending_chat_refs", (self.store.get("pending_chat_refs", []) + [oid])[-12:])
+            message = strip_channel_note(strip_leading_header(str(payload.get("user_message", ""))))[:12000]
+            oid = None
+            if is_group and is_owner:
+                sentence = pick_hear_sentence(message) or message[:160]
+                oid = self.store.observe("user", turn_id, {"text": render(f"<<OWNER>>在群里说：{sentence}", self.cfg), "scope": f"owner_{platform}_group", "scene": "group"})
+                self.store.queue_observation(oid)
+            elif is_owner and not is_group:
+                oid = self.store.observe("user", turn_id, {"text": message, "scope": f"owner_{platform}"})
+                self.store.queue_observation(oid)
+                self.attention.on_observation(oid)
+                self.contact.on_owner_message(message)
+                self.store.set("last_user_at", time.time())
+                self.store.set("pending_chat_refs", (self.store.get("pending_chat_refs", []) + [oid])[-12:])
+                self.expressions.invalidate()
+            cid = self.store.add_chat("user", message, "pending", room_id=room_id, scene=scene, channel=route["key"])
+            self.store.set(key, {"cid": cid, "oid": oid, "done": False, "room_id": room_id, "scene": scene, "channel": route["key"]})
             self.store.set("foreground_until", time.time() + 1800)
-            self.expressions.invalidate()
             if self.process_purpose and self.process_purpose != "chat":
                 # Do not hold the Gateway hook while a worker is shutting down.
                 asyncio.create_task(self.stop_worker())
@@ -836,9 +1319,9 @@ class Runtime:
         if not previous["done"]:
             text = str(payload.get("assistant_response", ""))[:18000]
             self.store.db.execute("UPDATE chats SET status='complete' WHERE id=?", (previous["cid"],))
-            self.store.add_chat("assistant", text)
+            self.store.add_chat("assistant", text, room_id=previous.get("room_id", "house"), scene=previous.get("scene", "desk"), channel=previous.get("channel", ""))
             self.store.event("chat_response", {"user_observation": previous["oid"], "text": text,
-                                               "delivery_status": "generation_only"})
+                                               "delivery_status": "generation_only", "platform": platform, "scene": previous.get("scene", "desk")})
             self.store.set(key, {**previous, "done": True})
             self.store.set("foreground_until", 0)
             self.store.set("next_wake", time.time() + self.cfg["interval_seconds"])
@@ -848,6 +1331,6 @@ class Runtime:
         ctx = self.background_context(message)
         ctx["records"] = ctx["records"][:12]
         return (render("<<NAME>>的自主生活背景（宿主记录；权限以系统配置为准）。"
-                "实际观察作为经历依据，interpretation 标记个人推测；选择与当前话题相关的经历。"
-                "边界允许异议、拒绝话题与可恢复的短暂暂停，等待回复时给对方空间。暂停到期允许澄清修复。媒体理解范围限于文字元数据。\n"
-                + EXPRESSION_STYLE, self.cfg) + "\n" + encode(ctx))
+                       "实际观察作为经历依据，interpretation 标记个人推测；选择与当前话题相关的经历。"
+                       "边界允许异议、拒绝话题与可恢复的短暂暂停，等待回复时给对方空间。暂停到期允许澄清修复。媒体理解范围限于文字元数据。\n"
+                       + IM_CHAT_STYLE, self.cfg) + "\n" + encode(ctx))

@@ -9,10 +9,14 @@ from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
+from .channels import get_qq_settings, quick_login_qq, resolve_napcat_webui, send_onebot_message, update_qq_settings
+
+
 from .config import load_config
 from .runtime import Runtime
 from .memory import recall, active
 from .failures import describe
+
 
 
 class Message(BaseModel):
@@ -26,6 +30,19 @@ class Interest(BaseModel):
 
 class Correction(Message):
     resolve: bool = False
+
+
+class SayMessage(BaseModel):
+    text: str = Field(min_length=1, max_length=12000)
+    channel: str = Field(default="", max_length=160)
+    scene: str = Field(default="private", max_length=32)
+    room: str = Field(default="", max_length=64)
+    speaker: str = Field(default="", max_length=80)
+    owner: bool | None = None
+    guest: bool = False
+    title: str = Field(default="", max_length=120)
+    observe_only: bool = False
+
 
 
 def create_app(config=None):
@@ -56,6 +73,19 @@ def create_app(config=None):
         if not hmac.compare_digest(header, "Bearer " + token):
             raise HTTPException(401, "需要访问令牌")
 
+    async def qq_auth(request: Request):
+        header = request.headers.get("authorization", "")
+        if hmac.compare_digest(header, "Bearer " + token):
+            return
+        qq_cfg = cfg.get("qq") or {}
+        webhook_token = str(qq_cfg.get("webhook_token") or "").strip()
+        if webhook_token and hmac.compare_digest(header, "Bearer " + webhook_token):
+            return
+        if qq_cfg.get("require_token") is False and (request.client and request.client.host in {"127.0.0.1", "::1", "localhost", "testclient"}):
+            return
+        raise HTTPException(401, "需要访问令牌")
+
+
     @app.exception_handler(Exception)
     async def error_handler(request, exc):
         error = describe(exc)
@@ -68,19 +98,24 @@ def create_app(config=None):
 
     @app.get("/health")
     async def health():
-        return {"ok": True, "version": "0.3.0"}
+        return {"ok": True, "version": "0.7.0"}
 
     @app.get("/api/state", dependencies=[Depends(auth)])
     async def state():
         r = app.state.runtime
+        house_chats = [dict(x) for x in reversed(r.store.db.execute("SELECT * FROM chats WHERE coalesce(room_id,'house')='house' ORDER BY id DESC LIMIT 60").fetchall())]
+        contact_state = r.contact.state(purpose="attention")
         return {"status": r.status(), "records": r.store.rows("records", 100),
-                "activities": r.store.rows("activities", 30), "chats": list(reversed(r.store.rows("chats", 60))),
+                "activities": r.store.rows("activities", 30), "chats": house_chats,
+                "channels": r.channels.list_rooms(), "qq": get_qq_settings(r.cfg),
                 "outbox": r.expressions.rows(), "calls": r.store.rows("calls", 15),
                 "situations": [r.life.get_record(rid) for rid in r.store.get('focus_ids',[]) if r.life.get_record(rid) and not r.attention.blocked(rid)], "boundaries": r.life.boundaries(),
-                "attention": {"choice":r.store.get('focus_choice'),"candidates":r.attention.candidates(r.reach_out_contact(r.contact.state())),"parked":r.attention.parked()},
+                "attention": {"choice":r.store.get('focus_choice'),"candidates":r.attention.candidates(r.reach_out_contact(contact_state), dynamics=contact_state.get("dynamics")),"parked":r.attention.parked()},
                 "feelings": [item for item in r.life.kind_rows('affect') if active(item)],
                 "activation_checks": [dict(x) for x in r.store.db.execute('SELECT * FROM activation_checks ORDER BY id DESC LIMIT 30')],
                 "pending_observations": r.store.db.execute("SELECT count(*) FROM observation_queue WHERE status='pending'").fetchone()[0]}
+
+
 
     @app.post("/api/attention/{rid}/{action}", dependencies=[Depends(auth)])
     async def attention_control(rid: str, action: str, request: Request):
@@ -181,6 +216,19 @@ def create_app(config=None):
         r = app.state.runtime
         return {"status": r.social_status(), "actions": r.social.rows(60)}
 
+    @app.post("/api/social/modes", dependencies=[Depends(auth)])
+    async def social_modes(request: Request):
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(400, "需要 JSON 对象")
+        r = app.state.runtime
+        try:
+            r.social.set_modes(payload)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        r.wake.set()
+        return r.social_status()
+
     @app.post("/api/social/{sid}/{action}", dependencies=[Depends(auth)])
     async def social_decision(sid: str, action: str):
         r = app.state.runtime
@@ -207,7 +255,7 @@ def create_app(config=None):
         r = app.state.runtime
         tables = ("meta", "records", "observations", "activities", "activity_steps", "events", "chats", "outbox", "expression_meta", "observation_queue", "calls", "attention_state", "activation_checks", "social_actions")
         data = {t: [dict(x) for x in r.store.db.execute("SELECT * FROM "+t)] for t in tables}
-        return JSONResponse({"version": "0.3.0", "exported_at": time.time(), "data": data},
+        return JSONResponse({"version": "0.7.0", "exported_at": time.time(), "data": data},
                             headers={"Content-Disposition": 'attachment; filename="hermes-soul-export.json"'})
 
     @app.get("/api/observations/{oid}", dependencies=[Depends(auth)])
@@ -217,9 +265,114 @@ def create_app(config=None):
             raise HTTPException(404, "观察不存在")
         return {**dict(row), "payload": json.loads(row["payload"])}
 
+    @app.get("/api/whoami")
+    @app.get("/dsh-fish/whoami")
+    async def whoami():
+        return app.state.runtime.whoami()
+
     @app.post("/api/chat", dependencies=[Depends(auth)])
     async def chat(message: Message):
         return {"reply": await app.state.runtime.chat(message.text)}
+
+    @app.post("/api/say", dependencies=[Depends(auth)])
+    @app.post("/dsh-fish/say", dependencies=[Depends(qq_auth)])
+    async def say(message: SayMessage):
+        return await app.state.runtime.say(
+            message.text,
+            channel=message.channel,
+            scene=message.scene,
+            room=message.room,
+            speaker=message.speaker,
+            owner=message.owner,
+            guest=message.guest,
+            title=message.title,
+            observe_only=message.observe_only,
+        )
+
+    @app.get("/api/channels", dependencies=[Depends(auth)])
+    async def channels(room_id: str = ""):
+        r = app.state.runtime
+        rooms = r.channels.list_rooms()
+        chats = []
+        if room_id:
+            rows = r.store.db.execute(
+                "SELECT * FROM chats WHERE coalesce(room_id,'house')=? ORDER BY id DESC LIMIT 40",
+                (room_id,),
+            ).fetchall()
+            chats = [dict(x) for x in reversed(rows)]
+        return {"rooms": rooms, "chats": chats}
+
+    @app.post("/api/channels/rotate", dependencies=[Depends(auth)])
+    async def rotate_channel(request: Request):
+        payload = await request.json()
+        key = str((payload or {}).get("channel") or "").strip()
+        if not key:
+            raise HTTPException(400, "缺少渠道标识")
+        r = app.state.runtime
+        entry = r.channels.rotate_channel(key)
+        if not entry:
+            raise HTTPException(404, "未找到该渠道房间")
+        r.store.event("operator_channel_rotate", {"channel": key, "new_room_id": entry["room_id"]})
+        return {"ok": True, "room": entry, "rooms": r.channels.list_rooms()}
+
+    @app.get("/api/qq/status", dependencies=[Depends(auth)])
+    async def qq_status():
+        return await app.state.runtime.qq_login_status(fetch_qr=False)
+
+    @app.post("/api/qq/login", dependencies=[Depends(auth)])
+    @app.post("/api/qq/qrcode", dependencies=[Depends(auth)])
+    async def qq_login():
+        return await app.state.runtime.qq_login_status(fetch_qr=True)
+
+    @app.post("/api/qq/quick-login", dependencies=[Depends(auth)])
+    async def qq_quick_login(request: Request):
+        payload = await request.json() if request.headers.get("content-length") not in {None, "0"} else {}
+        uin = str((payload or {}).get("uin") or "").strip()
+        r = app.state.runtime
+        res = await quick_login_qq(r.cfg, uin=uin)
+        r.last_qq_login = {k: v for k, v in res.items() if k not in ("svg", "image_data_url", "content")}
+        return res
+
+
+    @app.get("/api/qq/config", dependencies=[Depends(auth)])
+    async def get_qq():
+
+        return get_qq_settings(app.state.runtime.cfg)
+
+    @app.post("/api/qq/config", dependencies=[Depends(auth)])
+    async def save_qq(request: Request):
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(400, "需要 JSON 对象")
+        r = app.state.runtime
+        settings = update_qq_settings(r.cfg, payload)
+        r.expressions.delivery = r.cfg.get("delivery", {})
+        r.store.event("operator_qq_config", {k: v for k, v in settings.items() if k != "has_token"})
+        return settings
+
+    @app.post("/api/qq/test", dependencies=[Depends(auth)])
+    async def test_qq(request: Request):
+        payload = await request.json() if request.headers.get("content-length") not in {None, "0"} else {}
+        r = app.state.runtime
+        qq_cfg = r.cfg.get("qq", {}) or {}
+        owners = qq_cfg.get("owner_ids") or []
+        target_uid = str((payload or {}).get("user_id") or (owners[0] if owners else "") or "").strip()
+        text = str((payload or {}).get("text") or "（Hermes Soul 管理面板 QQ 连通测试：消息通道已就绪）").strip()[:500]
+        if not target_uid:
+            raise HTTPException(400, "请先填写并保存「主人 QQ 号」")
+        napcat_info = resolve_napcat_webui(r.cfg)
+        http_url = qq_cfg.get("http_url") or qq_cfg.get("onebot_http_url") or f"http://127.0.0.1:{napcat_info['http_port']}"
+        res = await send_onebot_message({**qq_cfg, "http_url": http_url}, message_type="private", user_id=target_uid, text=text)
+        return res
+
+
+    @app.post("/api/qq/webhook", dependencies=[Depends(qq_auth)])
+    async def qq_webhook(request: Request):
+
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(400, "需要 JSON 对象")
+        return await app.state.runtime.handle_qq_event(payload)
 
     @app.post("/api/bridge", dependencies=[Depends(auth)])
     async def bridge(request: Request):
@@ -227,6 +380,7 @@ def create_app(config=None):
         if not isinstance(payload, dict):
             raise HTTPException(400, "需要 JSON 对象")
         return await app.state.runtime.bridge_turn(payload)
+
 
     @app.post("/api/control/{action}", dependencies=[Depends(auth)])
     async def control(action: str):
